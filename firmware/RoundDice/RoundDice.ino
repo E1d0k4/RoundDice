@@ -36,8 +36,8 @@ float rotX=-0.42f,rotY=0.58f,rotZ=0.08f;
 
 const uint16_t BG=RGB565_BLACK;
 const uint16_t WHITE=RGB565_WHITE;
-const uint16_t DICE_BASE=0xD69A;
-const uint16_t DICE_BEVEL=0xF7BE;
+const uint16_t DICE_BASE=0x29A7;
+const uint16_t DICE_BEVEL=0x31C8;
 const uint16_t PIP_DARK=RGB565_BLACK;
 const uint16_t PIP_SHADOW=0x0861;
 
@@ -96,10 +96,28 @@ void fillRoundedFace(const Face&q,const V3 v[],uint16_t col){
 }
 
 void drawSoftBevel(const Face&q,const V3 v[]){
-  // No inset contour: the die stays visually flat-painted. Rounded geometry
-  // is produced by a soft edge highlight rather than a rectangular line.
-  (void)q;(void)v;
+  // A narrow inset strip provides rounded/beveled edges without drawing contour lines.
+  constexpr float k=0.055f;
+  static const float uv[8][2]={{-1+k,-1+k},{1-k,-1+k},{1-k,1-k},{-1+k,1-k},
+                               {-1+k*1.9f,-1+k*1.9f},{1-k*1.9f,-1+k*1.9f},
+                               {1-k*1.9f,1-k*1.9f},{-1+k*1.9f,1-k*1.9f}};
+  V2 outer[4],inner[4];
+  outer[0]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[0][0],uv[0][1]));
+  outer[1]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[1][0],uv[1][1]));
+  outer[2]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[2][0],uv[2][1]));
+  outer[3]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[3][0],uv[3][1]));
+  inner[0]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[4][0],uv[4][1]));
+  inner[1]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[5][0],uv[5][1]));
+  inner[2]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[6][0],uv[6][1]));
+  inner[3]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[7][0],uv[7][1]));
+  // Keep the bevel extremely subtle: it is shading, not a line.
+  fillTriangle(outer[0],outer[1],inner[1],DICE_BEVEL);fillTriangle(outer[0],inner[1],inner[0],DICE_BEVEL);
+  fillTriangle(outer[1],outer[2],inner[2],DICE_BEVEL);fillTriangle(outer[1],inner[2],inner[1],DICE_BEVEL);
+  fillTriangle(outer[2],outer[3],inner[3],DICE_BEVEL);fillTriangle(outer[2],inner[3],inner[2],DICE_BEVEL);
+  fillTriangle(outer[3],outer[0],inner[0],DICE_BEVEL);fillTriangle(outer[3],inner[0],inner[3],DICE_BEVEL);
 }
+
+
 void drawRecessedPips(const Face&q,const V3 v[]){
   static const float pips[6][7][2]={
     {{0,0}},{{-.52f,-.52f},{.52f,.52f}},{{-.52f,-.52f},{0,0},{.52f,.52f}},
@@ -117,13 +135,121 @@ void drawRecessedPips(const Face&q,const V3 v[]){
   n.x/=nl;n.y/=nl;n.z/=nl;
   for(uint8_t i=0;i<q.value;i++){
     V3 p=facePoint(v[q.a],v[q.b],v[q.c],v[q.d],pips[q.value-1][i][0],pips[q.value-1][i][1]);
-    // Push the centre of the pip visibly into the face. A broad dark cavity
-    // plus a smaller offset shadow removes the impression of a raised nub.
-    p.x-=n.x*5.0f;p.y-=n.y*5.0f;p.z-=n.z*5.0f;
-    V2 s=project(p);float scale=FOCAL/(FOCAL+p.z),r=11.0f*scale;
-    drawFilledCircle(s,r,PIP_DARK);
-    V2 shadow{s.x+r*0.16f,s.y+r*0.16f};
-    drawFilledCircle(shadow,r*0.48f,PIP_SHADOW);
-    drawFilledCircle(s,r*0.72f,PIP_DARK);
+    p.x-=n.x*3.0f;p.y-=n.y*3.0f;p.z-=n.z*3.0f;
+    V2 s=project(p);float scale=FOCAL/(FOCAL+p.z),r=8.5f*scale;
+    // Deep, dark circular pit. No white dot and no bright ring.
+    drawFilledCircle(s,r,PIP_SHADOW);
+    drawFilledCircle(s,r*0.78f,PIP_DARK);
+    // Tiny offset shadow edge makes the hole read as sunk into the surface.
+    V2 low{s.x+r*0.16f,s.y+r*0.16f};
+    drawFilledCircle(low,r*0.18f,PIP_SHADOW);
   }
-}}
+}
+
+
+void draw3DTestCube(){
+  clearFrame();
+  float h=CUBE/2.0f;
+  V3 v[8]={{-h,-h,-h},{h,-h,-h},{h,h,-h},{-h,h,-h},{-h,-h,h},{h,-h,h},{h,h,h},{-h,h,h}};
+  for(auto&p:v)p=rotate(p);
+
+  Face f[6]={{0,1,2,3,1,0},{4,7,6,5,2,0},{0,4,5,1,3,0},{3,2,6,7,4,0},{0,3,7,4,5,0},{1,5,6,2,6,0}};
+  for(auto&q:f)q.depth=(v[q.a].z+v[q.b].z+v[q.c].z+v[q.d].z)*.25f;
+  for(int i=0;i<6;i++)for(int j=i+1;j<6;j++)if(f[i].depth<f[j].depth){Face tmp=f[i];f[i]=f[j];f[j]=tmp;}
+
+  for(const auto&q:f){
+    V3 n=faceNormal(q,v);
+    if(n.z<=0)continue;
+    // Every visible face has the same paint. This removes the artificial
+    // multi-colour "technical cube" appearance.
+    fillRoundedFace(q,v,DICE_BASE);
+    drawSoftBevel(q,v);
+    drawRecessedPips(q,v);
+  }
+  gfx->draw16bitRGBBitmap(0,0,frame,W,H);
+}
+
+
+void drawTextAt(const char*text,int16_t x,int16_t y,uint8_t size,uint16_t color){
+  gfx->setTextSize(size);gfx->setTextColor(color);gfx->setCursor(x,y);gfx->print(text);
+}
+void drawStaticScreen(){
+  gfx->fillScreen(BG);drawTextAt("ROUND DICE",145,25,3,WHITE);drawTextAt("3D HARDWARE TEST",142,62,2,0x29A7);
+  drawTextAt("TOUCH  •  SHAKE  •  TILT",130,447,1,0x29A7);
+  char r[16];snprintf(r,sizeof(r),"D6  %u",(unsigned)lastDice);drawTextAt(r,210,425,2,RGB565_YELLOW);
+}
+void drawResult(){gfx->fillRect(195,418,80,28,BG);char r[16];snprintf(r,sizeof(r),"D6  %u",(unsigned)lastDice);drawTextAt(r,210,425,2,RGB565_YELLOW);}
+void drawMenu(){
+  gfx->fillRoundRect(18,8,430,285,28,RGB565_DARKGREY);gfx->drawRoundRect(18,8,430,285,28,0x29A7);
+  drawTextAt("MENU",190,30,3,WHITE);drawTextAt("Einstellungen",105,88,2,WHITE);drawTextAt("Spiele",170,138,2,WHITE);
+  drawTextAt("Soundboard",150,188,2,WHITE);drawTextAt("Info",198,238,2,WHITE);drawTextAt("Nach oben wischen = schliessen",90,268,1,0x29A7);
+}
+void animateDice(uint8_t to){
+  float ox=rotX,oy=rotY,oz=rotZ;
+  for(int i=0;i<36;i++){
+    float t=(float)i/35.0f,ease=1.0f-(1.0f-t)*(1.0f-t);
+    rotX=ox+sinf(t*PI*2)*.55f*(1-t);rotY=oy+ease*PI*5;rotZ=oz+sinf(t*PI*3)*.45f*(1-t);
+    lastDice=(i==35)?to:(uint8_t)random(1,7);draw3DTestCube();delay(20);
+  }
+  lastDice=to;
+  switch(to){case 1:rotX=0;rotY=0;break;case 2:rotX=0;rotY=PI;break;case 3:rotX=PI*.5f;rotY=0;break;
+    case 4:rotX=-PI*.5f;rotY=0;break;case 5:rotX=0;rotY=-PI*.5f;break;default:rotX=0;rotY=PI*.5f;break;}
+  rotZ=0;draw3DTestCube();drawResult();
+}
+void rollDice(const char*reason){
+  uint32_t now=millis();if(now-lastRollMs<kRollCooldownMs)return;lastRollMs=now;
+  uint8_t result=(uint8_t)random(1,7);animateDice(result);Serial.printf("D6 roll (%s): %u\n",reason,(unsigned)result);
+}
+void updateMotion(){
+  float ax,ay,az;if(!qmi.getAccelerometer(ax,ay,az))return;
+  if(!imuReady){lastAccelX=ax;lastAccelY=ay;lastAccelZ=az;imuReady=true;return;}
+  float dx=ax-lastAccelX,dy=ay-lastAccelY,dz=az-lastAccelZ,motion=sqrtf(dx*dx+dy*dy+dz*dz);
+  lastAccelX=ax;lastAccelY=ay;lastAccelZ=az;
+  if(!menuOpen&&motion>=kShakeThreshold){rollDice("shake");return;}if(menuOpen)return;
+  float tx=constrain(-ay*.95f,-1.05f,1.05f),ty=constrain(ax*.95f,-1.05f,1.05f);
+  rotX+=(tx-rotX)*.08f;rotY+=(ty-rotY)*.08f;rotZ+=(-az*.12f-rotZ)*.05f;draw3DTestCube();
+}
+void processTouch(){
+  uint8_t supported=touch.getSupportTouchPoint(),limit=supported<kMaxTouchPoints?supported:kMaxTouchPoints;
+  uint8_t points=touch.getPoint(touchX,touchY,limit);bool down=points>0;
+  if(!down){
+    if(touchWasDown){
+      int16_t downDist=swipeMaxY-swipeStartY,upDist=swipeStartY-swipeMinY;
+      if(trackingSwipe){
+        if(!menuOpen&&downDist>=kSwipeThreshold){menuOpen=true;drawMenu();}
+        else if(menuOpen&&upDist>=kSwipeThreshold){menuOpen=false;drawStaticScreen();draw3DTestCube();drawResult();}
+      }
+      touchWasDown=false;trackingSwipe=false;
+    }return;
+  }
+  int16_t x=touchX[0],y=touchY[0];
+  if(!touchWasDown){
+    touchWasDown=true;trackingSwipe=true;swipeStartY=y;swipeMinY=y;swipeMaxY=y;
+    if(!menuOpen&&x>85&&x<390&&y>85&&y<390){trackingSwipe=false;rollDice("touch");}return;
+  }
+  if(trackingSwipe){swipeMinY=min(swipeMinY,y);swipeMaxY=max(swipeMaxY,y);}
+}
+}
+void setup(){
+  Serial.begin(115200);delay(1000);Serial.println();Serial.println("Round Dice boot");
+  Wire.begin(IIC_SDA,IIC_SCL);
+  if(!gfx->begin()){Serial.println("DISPLAY ERROR");while(true)delay(1000);}
+  gfx->fillScreen(BG);gfx->setBrightness(180);drawTextAt("ROUND DICE",145,25,3,WHITE);drawTextAt("DISPLAY OK",175,205,2,0x29A7);drawTextAt("STARTING 3D...",150,240,2,WHITE);
+  Serial.printf("PSRAM found: %s, size: %u bytes\n",psramFound()?"YES":"NO",(unsigned)ESP.getPsramSize());
+  const size_t frameBytes=(size_t)W*(size_t)H*sizeof(uint16_t);
+  frame=(uint16_t*)heap_caps_malloc(frameBytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+  if(!frame){Serial.println("PSRAM FRAMEBUFFER ALLOCATION FAILED");gfx->fillScreen(BG);drawTextAt("PSRAM ERROR",145,190,3,RGB565_RED);drawTextAt("NO FRAMEBUFFER",125,235,2,WHITE);while(true)delay(1000);}
+  Serial.printf("Framebuffer allocated: %u bytes\n",(unsigned)frameBytes);
+  touch.setPins(TP_RESET,TP_INT);
+  if(!touch.begin(Wire,kTouchAddress,IIC_SDA,IIC_SCL)){Serial.println("TOUCH ERROR");gfx->fillScreen(BG);drawTextAt("TOUCH ERROR",150,220,3,RGB565_RED);while(true)delay(1000);}
+  touch.setMaxCoordinates(LCD_WIDTH,LCD_HEIGHT);touch.setMirrorXY(true,true);
+  if(!qmi.begin(Wire,QMI8658_L_SLAVE_ADDRESS,IIC_SDA,IIC_SCL)){Serial.println("IMU ERROR");gfx->fillScreen(BG);drawTextAt("IMU ERROR",155,220,3,RGB565_RED);while(true)delay(1000);}
+  qmi.configAccelerometer(SensorQMI8658::ACC_RANGE_4G,SensorQMI8658::ACC_ODR_1000Hz,SensorQMI8658::LPF_MODE_0);qmi.enableAccelerometer();
+  randomSeed((unsigned long)micros());drawStaticScreen();draw3DTestCube();Serial.println("Round Dice true 3D renderer ready.");
+}
+void loop(){
+  uint32_t now=millis();
+  if(now-lastTouchPollMs>=kTouchPollMs){lastTouchPollMs=now;processTouch();}
+  if(now-lastImuPollMs>=kImuPollMs){lastImuPollMs=now;updateMotion();}
+  delay(1);
+}
