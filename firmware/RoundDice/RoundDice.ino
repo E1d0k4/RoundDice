@@ -104,6 +104,39 @@ V3 facePoint(const V3 &a,const V3 &b,const V3 &c,const V3 &d,float u,float v){
   };
 }
 
+void fillRoundedFace(const Face &q,const V3 vtx[8],uint16_t col){
+  // A small corner cut creates a subtle bevel/rounding instead of a razor-sharp cube.
+  constexpr float k=0.16f;
+  static const float uv[8][2]={
+    {-1.0f+k,-1.0f},{1.0f-k,-1.0f},{1.0f,-1.0f+k},{1.0f,1.0f-k},
+    {1.0f-k,1.0f},{-1.0f+k,1.0f},{-1.0f,1.0f-k},{-1.0f,-1.0f+k}
+  };
+  V2 p[8];
+  for(int i=0;i<8;i++){
+    V3 q3=facePoint(vtx[q.a],vtx[q.b],vtx[q.c],vtx[q.d],uv[i][0],uv[i][1]);
+    p[i]=project(q3);
+  }
+  // Fill as a fan. The face is convex, so this is stable for all rotations.
+  V3 center3=facePoint(vtx[q.a],vtx[q.b],vtx[q.c],vtx[q.d],0,0);
+  V2 center=project(center3);
+  for(int i=0;i<8;i++)fillTriangle(center,p[i],p[(i+1)&7],col);
+}
+
+void drawRoundedBevel(const Face &q,const V3 vtx[8]){
+  // Dark inset around each face gives the cut corners a visible depth.
+  constexpr float k=0.16f;
+  static const float uv[8][2]={
+    {-1.0f+k,-1.0f},{1.0f-k,-1.0f},{1.0f,-1.0f+k},{1.0f,1.0f-k},
+    {1.0f-k,1.0f},{-1.0f+k,1.0f},{-1.0f,1.0f-k},{-1.0f,-1.0f+k}
+  };
+  V2 p[8];
+  for(int i=0;i<8;i++){
+    V3 q3=facePoint(vtx[q.a],vtx[q.b],vtx[q.c],vtx[q.d],uv[i][0],uv[i][1]);
+    p[i]=project(q3);
+  }
+  for(int i=0;i<8;i++)line(p[i],p[(i+1)&7],EDGE);
+}
+
 void drawPipPattern(const Face &q,const V3 vtx[8],const V2 screen[8]){
   static const float pips[6][7][2]={
     {{0,0}},
@@ -140,13 +173,16 @@ void draw3DTestCube(){
     // With the camera looking toward +Z, outward +Z-facing normals are visible.
     float normalZ=ab.x*ac.y-ab.y*ac.x;
     if(normalZ<=0)continue;
-    fillTriangle(s[q.a],s[q.b],s[q.c],FACE[q.value-1]);
-    fillTriangle(s[q.a],s[q.c],s[q.d],FACE[q.value-1]);
+    fillRoundedFace(q,v,FACE[q.value-1]);
     drawPipPattern(q,v,s);
   }
-  // Crisp 3D edges, drawn after the pips.
-  const uint8_t e[12][2]={{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
-  for(auto &a:e)line(s[a[0]],s[a[1]],EDGE);
+  // Beveled face borders: much softer than the previous sharp wireframe.
+  for(const auto &q:f){
+    V3 A=v[q.a],B=v[q.b],C=v[q.c];
+    V3 ab{B.x-A.x,B.y-A.y,B.z-A.z},ac{C.x-A.x,C.y-A.y,C.z-A.z};
+    float normalZ=ab.x*ac.y-ab.y*ac.x;
+    if(normalZ>0)drawRoundedBevel(q,v);
+  }
 
   gfx->draw16bitRGBBitmap(0,0,frame,W,H);
 }
