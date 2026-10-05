@@ -38,7 +38,7 @@ jobs:
 
       - name: Compile
         run: |
-          arduino-cli compile --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB" --libraries firmware/RoundDice/libraries --export-binaries --output-dir build/arduino firmware/RoundDice
+          arduino-cli compile --fqbn "esp32:esp32:esp32s3:FlashMode=qio,PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB" --libraries firmware/RoundDice/libraries --export-binaries --output-dir build/arduino firmware/RoundDice
 
       - name: Prepare compact Web Installer image
         shell: bash
