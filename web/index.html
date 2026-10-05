@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Round Dice – Web Installer</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10.1.1/dist/web/install-button.js?module"></script>
+<style>
+:root { color-scheme: dark; }
+body { margin:0; min-height:100vh; display:grid; place-items:center; font-family:system-ui,sans-serif; background:#111; color:#fff; }
+main { width:min(92vw,560px); padding:32px; box-sizing:border-box; border-radius:28px; background:#1d1d1d; text-align:center; }
+h1 { margin-top:0; } p { line-height:1.5; color:#ccc; }
+esp-web-install-button { display:inline-block; margin-top:18px; }
+</style>
+</head>
+<body>
+<main>
+<h1>🎲 Round Dice</h1>
+<p>Erster Hardware-Test für das Waveshare ESP32-S3-Touch-AMOLED-1.75.</p>
+<p>USB-C anschließen und den Button drücken. Der Browser führt die Firmware-Installation direkt über USB durch.</p>
+<esp-web-install-button manifest="manifest.json">
+<button slot="activate">Round Dice installieren</button>
+<span slot="unsupported">Dieser Browser unterstützt die direkte Web-Installation nicht. Bitte Chrome oder Edge verwenden.</span>
+</esp-web-install-button>
+</main>
+</body>
+</html>
