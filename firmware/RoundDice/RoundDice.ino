@@ -39,31 +39,31 @@ void drawRecessedPips(const Face&q,const V3 v[]){static const float pips[6][7][2
 void drawTableShadow(){if(diceLift<2)return;float s=constrain(1+diceLift/150,1,2.2f);V2 c{CX,CY+112};for(int i=10;i>=1;i--){float rr=(95*s)*i/10;uint16_t shade=(uint16_t)(0x1082+(10-i)*0x0200);drawFilledCircle({c.x,c.y+8},rr,shade);}}
 void draw3DTestCube(){clearFrame();drawTableShadow();float h=CUBE/2;V3 v[8]={{-h,-h,-h},{h,-h,-h},{h,h,-h},{-h,h,-h},{-h,-h,h},{h,-h,h},{h,h,h},{-h,h,h}};for(auto&p:v)p=rotate(p);for(auto&p:v)p.y-=diceLift;Face f[6]={{0,1,2,3,1,0},{4,7,6,5,2,0},{0,4,5,1,3,0},{3,2,6,7,4,0},{0,3,7,4,5,0},{1,5,6,2,6,0}};for(auto&q:f)q.depth=(v[q.a].z+v[q.b].z+v[q.c].z+v[q.d].z)*.25f;for(int i=0;i<6;i++)for(int j=i+1;j<6;j++)if(f[i].depth<f[j].depth){Face tmp=f[i];f[i]=f[j];f[j]=tmp;}for(const auto&q:f){V3 n=faceNormal(q,v);if(n.z<=0)continue;fillRoundedFace(q,v,DICE_BASE);drawRecessedPips(q,v);}gfx->draw16bitRGBBitmap(0,0,frame,W,H);}
 void targetRotation(uint8_t value,float &tx,float &ty){switch(value){case 1:tx=0;ty=0;break;case 2:tx=0;ty=PI;break;case 3:tx=PI*.5f;ty=0;break;case 4:tx=-PI*.5f;ty=0;break;case 5:tx=0;ty=-PI*.5f;break;default:tx=0;ty=PI*.5f;break;}}
-void startDiceRoll(uint8_t result){lastDice=result;diceRolling=true;diceBounces=0;diceLift=155.0f;diceVelocity=0.0f;diceSpinX=random(-260,261)/100.0f;diceSpinY=random(-300,301)/100.0f;diceSpinZ=random(-180,181)/100.0f;lastPhysicsMs=millis();}
+void startDiceRoll(uint8_t result){lastDice=result;diceRolling=true;diceBounces=0;diceLift=190.0f;diceVelocity=0.0f;diceSpinX=random(-650,651)/100.0f;diceSpinY=random(-760,761)/100.0f;diceSpinZ=random(-500,501)/100.0f;lastPhysicsMs=millis();}
 void drawResult();
-void updateDicePhysics(){if(!diceRolling)return;uint32_t now=millis();float dt=(now-lastPhysicsMs)*.001f;lastPhysicsMs=now;if(dt<=0)return;dt=constrain(dt,.010f,.022f);
-  diceVelocity-=700.0f*dt;
+void updateDicePhysics(){if(!diceRolling)return;uint32_t now=millis();float dt=(now-lastPhysicsMs)*.001f;lastPhysicsMs=now;if(dt<=0)return;dt=constrain(dt,.008f,.018f);
+  diceVelocity-=3000.0f*dt;
   diceLift+=diceVelocity*dt;
   rotX+=diceSpinX*dt;rotY+=diceSpinY*dt;rotZ+=diceSpinZ*dt;
-  float drag=powf(.965f,dt*60);diceSpinX*=drag;diceSpinY*=drag;diceSpinZ*=drag;
+  float drag=powf(.90f,dt*60);diceSpinX*=drag;diceSpinY*=drag;diceSpinZ*=drag;
   if(diceLift<=0.0f){
     diceLift=0.0f;
     float impact=fabsf(diceVelocity);
-    if(diceBounces<2 && impact>20.0f){
+    if(diceBounces<2 && impact>28.0f){
       diceBounces++;
-      diceVelocity=impact*(diceBounces==1?0.30f:0.16f);
-      diceSpinX*=diceBounces==1?.52f:.34f;diceSpinY*=diceBounces==1?.52f:.34f;diceSpinZ*=diceBounces==1?.48f:.30f;
+      diceVelocity=impact*(diceBounces==1?0.30f:0.12f);
+      diceSpinX*=diceBounces==1?.48f:.28f;diceSpinY*=diceBounces==1?.48f:.28f;diceSpinZ*=diceBounces==1?.42f:.22f;
     }else{
       diceVelocity=0.0f;
-      diceSpinX*=.72f;diceSpinY*=.72f;diceSpinZ*=.65f;
+      diceSpinX*=.52f;diceSpinY*=.52f;diceSpinZ*=.45f;
       float tx,ty;targetRotation(lastDice,tx,ty);
       float dx=atan2f(sinf(tx-rotX),cosf(tx-rotX)),dy=atan2f(sinf(ty-rotY),cosf(ty-rotY));
-      rotX+=dx*.38f;rotY+=dy*.38f;rotZ*=.42f;
-      if(fabsf(dx)<.012f&&fabsf(dy)<.012f&&fabsf(diceSpinX)+fabsf(diceSpinY)+fabsf(diceSpinZ)<.028f){rotX=tx;rotY=ty;rotZ=0;diceRolling=false;draw3DTestCube();drawResult();return;}
+      rotX+=dx*.52f;rotY+=dy*.52f;rotZ*=.28f;
+      if(fabsf(dx)<.018f&&fabsf(dy)<.018f&&fabsf(diceSpinX)+fabsf(diceSpinY)+fabsf(diceSpinZ)<.045f){rotX=tx;rotY=ty;rotZ=0;diceRolling=false;draw3DTestCube();drawResult();return;}
     }
   }
   draw3DTestCube();}
-void animateDice(uint8_t to){startDiceRoll(to);while(diceRolling){updateDicePhysics();delay(10);}}
+void animateDice(uint8_t to){startDiceRoll(to);while(diceRolling){updateDicePhysics();delay(5);}}
 void rollDice(const char*reason){uint32_t now=millis();if(now-lastRollMs<kRollCooldownMs||diceRolling)return;lastRollMs=now;uint8_t result=(uint8_t)random(1,7);Serial.printf("D6 physical roll (%s): %u\n",reason,(unsigned)result);animateDice(result);}
 void drawTextAt(const char*text,int16_t x,int16_t y,uint8_t size,uint16_t color){gfx->setTextSize(size);gfx->setTextColor(color);gfx->setCursor(x,y);gfx->print(text);}
 void drawStaticScreen(){gfx->fillScreen(BG);drawTextAt("ROUND DICE",145,25,3,WHITE);drawTextAt("3D HARDWARE TEST",142,62,2,0x29A7);drawTextAt("TOUCH  •  SHAKE  •  TILT",130,447,1,0x29A7);char r[16];snprintf(r,sizeof(r),"D6  %u",(unsigned)lastDice);drawTextAt(r,210,425,2,RGB565_YELLOW);}
