@@ -85,6 +85,43 @@ void fillTriangle(V2 a,V2 b,V2 c,uint16_t col){
     if((w0>=0&&w1>=0&&w2>=0)||(w0<=0&&w1<=0&&w2<=0))px(x,y,col);
   }
 }
+void drawFilledCircle(V2 center,float radius,uint16_t col){
+  int minX=max(0,(int)floorf(center.x-radius)),maxX=min(W-1,(int)ceilf(center.x+radius));
+  int minY=max(0,(int)floorf(center.y-radius)),maxY=min(H-1,(int)ceilf(center.y+radius));
+  float r2=radius*radius;
+  for(int y=minY;y<=maxY;y++)for(int x=minX;x<=maxX;x++){
+    float dx=(x+0.5f)-center.x,dy=(y+0.5f)-center.y;
+    if(dx*dx+dy*dy<=r2)px(x,y,col);
+  }
+}
+
+V3 facePoint(const V3 &a,const V3 &b,const V3 &c,const V3 &d,float u,float v){
+  float s=(u+1.0f)*0.5f,t=(v+1.0f)*0.5f;
+  return {
+    (1.0f-s)*(1.0f-t)*a.x+s*(1.0f-t)*b.x+s*t*c.x+(1.0f-s)*t*d.x,
+    (1.0f-s)*(1.0f-t)*a.y+s*(1.0f-t)*b.y+s*t*c.y+(1.0f-s)*t*d.y,
+    (1.0f-s)*(1.0f-t)*a.z+s*(1.0f-t)*b.z+s*t*c.z+(1.0f-s)*t*d.z
+  };
+}
+
+void drawPipPattern(const Face &q,const V3 vtx[8],const V2 screen[8]){
+  static const float pips[6][7][2]={
+    {{0,0}},
+    {{-0.52f,-0.52f},{0.52f,0.52f}},
+    {{-0.52f,-0.52f},{0,0},{0.52f,0.52f}},
+    {{-0.52f,-0.52f},{0.52f,-0.52f},{-0.52f,0.52f},{0.52f,0.52f}},
+    {{-0.52f,-0.52f},{0.52f,-0.52f},{0,0},{-0.52f,0.52f},{0.52f,0.52f}},
+    {{-0.52f,-0.58f},{-0.52f,0},{-0.52f,0.58f},{0.52f,-0.58f},{0.52f,0},{0.52f,0.58f}}
+  };
+  uint8_t count=q.value;
+  for(uint8_t i=0;i<count;i++){
+    V3 p=facePoint(vtx[q.a],vtx[q.b],vtx[q.c],vtx[q.d],pips[count-1][i][0],pips[count-1][i][1]);
+    V2 s=project(p);
+    float scale=FOCAL/(FOCAL+p.z);
+    drawFilledCircle(s,9.0f*scale,WHITE);
+  }
+}
+
 void draw3DTestCube(){
   clearFrame();
   float h=CUBE/2.0f;
@@ -98,16 +135,18 @@ void draw3DTestCube(){
 
   for(const auto &q:f){
     V3 A=v[q.a],B=v[q.b],C=v[q.c];
-    float nz=(B.x-A.x)*(C.y-A.y)-(B.y-A.y)*(C.x-A.x);
-    if(nz<=0)continue;
+    V3 ab{B.x-A.x,B.y-A.y,B.z-A.z},ac{C.x-A.x,C.y-A.y,C.z-A.z};
+    float nz=ab.x*ac.y-ab.y*ac.x;
+    // With the camera looking toward +Z, outward +Z-facing normals are visible.
+    float normalZ=ab.x*ac.y-ab.y*ac.x;
+    if(normalZ<=0)continue;
     fillTriangle(s[q.a],s[q.b],s[q.c],FACE[q.value-1]);
     fillTriangle(s[q.a],s[q.c],s[q.d],FACE[q.value-1]);
+    drawPipPattern(q,v,s);
   }
-  // Strong, unmistakable 3D wireframe: all 12 cube edges.
+  // Crisp 3D edges, drawn after the pips.
   const uint8_t e[12][2]={{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
   for(auto &a:e)line(s[a[0]],s[a[1]],EDGE);
-  // Center crosshair makes rotation/depth visually obvious.
-  line({CX-7,CY},{CX+7,CY},WHITE); line({CX,CY-7},{CX,CY+7},WHITE);
 
   gfx->draw16bitRGBBitmap(0,0,frame,W,H);
 }
@@ -131,15 +170,27 @@ void drawMenu(){
 }
 void animateDice(uint8_t to){
   float ox=rotX,oy=rotY,oz=rotZ;
-  for(int i=0;i<30;i++){
-    float t=(float)i/29.0f;
-    rotX=ox+sinf(t*PI*2.0f)*0.55f;
-    rotY=oy+t*PI*4.0f;
-    rotZ=oz+sinf(t*PI*3.0f)*0.45f;
-    lastDice=(i==29)?to:(uint8_t)random(1,7);
+  for(int i=0;i<36;i++){
+    float t=(float)i/35.0f;
+    float ease=1.0f-(1.0f-t)*(1.0f-t);
+    rotX=ox+sinf(t*PI*2.0f)*0.55f*(1.0f-t);
+    rotY=oy+ease*PI*5.0f;
+    rotZ=oz+sinf(t*PI*3.0f)*0.45f*(1.0f-t);
+    lastDice=(i==35)?to:(uint8_t)random(1,7);
     draw3DTestCube();delay(20);
   }
-  lastDice=to;rotX=ox;rotY=oy;rotZ=oz;draw3DTestCube();drawResult();
+  lastDice=to;
+  // Settle with the rolled value facing the camera.
+  switch(to){
+    case 1: rotX=0.0f;       rotY=0.0f;       break;
+    case 2: rotX=0.0f;       rotY=PI;         break;
+    case 3: rotX=PI*0.5f;     rotY=0.0f;       break;
+    case 4: rotX=-PI*0.5f;    rotY=0.0f;       break;
+    case 5: rotX=0.0f;       rotY=-PI*0.5f;   break;
+    default:rotX=0.0f;       rotY=PI*0.5f;    break;
+  }
+  rotZ=0.0f;
+  draw3DTestCube();drawResult();
 }
 void rollDice(const char *reason){
   uint32_t now=millis();if(now-lastRollMs<kRollCooldownMs)return;lastRollMs=now;
