@@ -3,7 +3,6 @@ name: Build Round Dice firmware
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -74,7 +73,4 @@ jobs:
         run: |
           set -euo pipefail
           gh release view test-latest >/dev/null 2>&1 || gh release create test-latest --title "Round Dice Test – latest" --notes "Automatisch erzeugte Test-Firmware für den Web Installer."
-          for asset in round-dice-installer.bin round-dice-bootloader.bin round-dice-partitions.bin round-dice-firmware.bin round-dice-boot_app0.bin round-dice-test-merged.bin; do
-            gh release delete-asset test-latest "$asset" --yes >/dev/null 2>&1 || true
-          done
           gh release upload test-latest build/round-dice-installer.bin --clobber
