@@ -24,12 +24,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download current firmware
+        run: |
+          set -euo pipefail
+          mkdir -p web
+          curl -fL --retry 3 -o web/firmware.bin \
+            https://github.com/E1d0k4/RoundDice/releases/download/test-latest/round-dice-test-merged.bin
+          test -s web/firmware.bin
+          ls -lh web/firmware.bin
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: web
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
