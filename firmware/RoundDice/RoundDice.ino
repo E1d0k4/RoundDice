@@ -30,18 +30,17 @@ bool takeTouchInterrupt() {
   return pending;
 }
 
-void drawCenteredText(const char *text, int16_t y, uint8_t size, uint16_t color) {
+void drawTextAt(const char *text, int16_t x, int16_t y, uint8_t size, uint16_t color) {
   gfx->setTextSize(size);
   gfx->setTextColor(color);
-  const int16_t width = gfx->textWidth(text);
-  gfx->setCursor((LCD_WIDTH - width) / 2, y);
+  gfx->setCursor(x, y);
   gfx->print(text);
 }
 
 void drawDieFace(uint8_t value) {
   gfx->fillScreen(RGB565_BLACK);
-  drawCenteredText("ROUND DICE", 28, 3, RGB565_WHITE);
-  drawCenteredText("WAVESHARE TEST", 65, 2, RGB565_CYAN);
+  drawTextAt("ROUND DICE", 145, 28, 3, RGB565_WHITE);
+  drawTextAt("WAVESHARE TEST", 142, 65, 2, RGB565_CYAN);
 
   gfx->fillRoundRect(123, 118, 220, 220, 30, RGB565_WHITE);
   gfx->drawRoundRect(123, 118, 220, 220, 30, RGB565_CYAN);
@@ -66,22 +65,18 @@ void drawDieFace(uint8_t value) {
 
   gfx->fillRoundRect(112, 365, 242, 58, 20, RGB565_BLUE);
   gfx->drawRoundRect(112, 365, 242, 58, 20, RGB565_WHITE);
-  drawCenteredText("WURFELN", 384, 2, RGB565_WHITE);
+  drawTextAt("WURFELN", 173, 384, 2, RGB565_WHITE);
 
   char result[32];
   snprintf(result, sizeof(result), "D6 = %u", static_cast<unsigned>(value));
-  drawCenteredText(result, 445, 2, RGB565_YELLOW);
+  drawTextAt(result, 196, 445, 2, RGB565_YELLOW);
 }
 
 void showTouch(int16_t x, int16_t y) {
   gfx->fillRoundRect(48, 8, 370, 34, 12, RGB565_DARKGREY);
-  gfx->setTextSize(2);
-  gfx->setTextColor(RGB565_WHITE);
   char buffer[48];
   snprintf(buffer, sizeof(buffer), "Touch X:%d Y:%d", x, y);
-  const int16_t width = gfx->textWidth(buffer);
-  gfx->setCursor((LCD_WIDTH - width) / 2, 17);
-  gfx->print(buffer);
+  drawTextAt(buffer, 100, 17, 2, RGB565_WHITE);
 }
 
 void rollDice() {
@@ -117,7 +112,7 @@ void setup() {
   touch.setPins(TP_RESET, TP_INT);
   if (!touch.begin(Wire, kTouchAddress, IIC_SDA, IIC_SCL)) {
     Serial.println("ERROR: CST9217 initialization failed!");
-    drawCenteredText("TOUCH ERROR", 220, 3, RGB565_RED);
+    drawTextAt("TOUCH ERROR", 150, 220, 3, RGB565_RED);
     while (true) delay(1000);
   }
 
@@ -165,4 +160,6 @@ void loop() {
     delay(500);
     drawDieFace(lastDice);
   }
+}
+
 }
