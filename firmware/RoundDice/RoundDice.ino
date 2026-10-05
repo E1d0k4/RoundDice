@@ -114,6 +114,44 @@ void fillRoundedFace(const Face&q,const V3 v[],uint16_t col){
 // No bevel strip and no inner rectangle. The rounded silhouette is the edge.
 void drawSoftBevel(const Face&q,const V3 v[]){ (void)q; (void)v; }
 
+void drawRecessedPip(V3 center,V3 u,V3 vv,V3 n,float radius){
+  // A real concave-looking pip: the rim stays at the die surface while
+  // successive rings move inward along the face normal. The center is behind
+  // the surface, so it can never look like a raised button.
+  constexpr int SEG=16;
+  constexpr int RINGS=4;
+  const uint16_t shades[RINGS]={0x18E3,0x1082,0x0861,RGB565_BLACK};
+
+  V3 ring[RINGS][SEG];
+  for(int r=0;r<RINGS;r++){
+    float t=(float)r/(float)(RINGS-1);
+    float rr=radius*(1.0f-0.72f*t);
+    float depth=5.5f*t;
+    for(int i=0;i<SEG;i++){
+      float a=2.0f*PI*(float)i/(float)SEG;
+      float ca=cosf(a),sa=sinf(a);
+      ring[r][i]={
+        center.x + u.x*(ca*rr) + vv.x*(sa*rr) - n.x*depth,
+        center.y + u.y*(ca*rr) + vv.y*(sa*rr) - n.y*depth,
+        center.z + u.z*(ca*rr) + vv.z*(sa*rr) - n.z*depth
+      };
+    }
+  }
+
+  // Fill each annulus with slightly different shading. This creates the
+  // optical curvature of a hemispherical cavity without any raised outline.
+  for(int r=0;r<RINGS-1;r++){
+    for(int i=0;i<SEG;i++){
+      int j=(i+1)%SEG;
+      fillTriangle(project(ring[r][i]),project(ring[r][j]),project(ring[r+1][j]),shades[r]);
+      fillTriangle(project(ring[r][i]),project(ring[r+1][j]),project(ring[r+1][i]),shades[r]);
+    }
+  }
+  V2 c=project(ring[RINGS-1][0]);
+  float scale=FOCAL/(FOCAL+ring[RINGS-1][0].z);
+  drawFilledCircle(c,radius*0.28f*scale,RGB565_BLACK);
+}
+
 void drawRecessedPips(const Face&q,const V3 v[]){
   static const float pips[6][7][2]={
     {{0,0}},{{-.50f,-.50f},{.50f,.50f}},{{-.50f,-.50f},{0,0},{.50f,.50f}},
@@ -130,22 +168,11 @@ void drawRecessedPips(const Face&q,const V3 v[]){
   float nl=sqrtf(n.x*n.x+n.y*n.y+n.z*n.z);if(nl<0.01f)return;
   n.x/=nl;n.y/=nl;n.z/=nl;
 
+  // Large, compact pips like a real D6. Their centers are recessed rather
+  // than translated toward the viewer.
   for(uint8_t i=0;i<q.value;i++){
     V3 p=facePoint(v[q.a],v[q.b],v[q.c],v[q.d],pips[q.value-1][i][0],pips[q.value-1][i][1]);
-
-    // Push the black pit into the die. The dark outer disc is the cavity wall,
-    // the smaller black disc is the deep bottom. This is intentionally large
-    // enough to remain visible during rotation.
-    p.x-=n.x*8.0f;p.y-=n.y*8.0f;p.z-=n.z*8.0f;
-    V2 s=project(p);
-    float scale=FOCAL/(FOCAL+p.z);
-    float r=19.0f*scale;
-    drawFilledCircle(s,r,PIP_SHADOW);
-    drawFilledCircle(s,r*0.82f,PIP_DARK);
-
-    // One-sided lower shadow inside the hole, never a raised white highlight.
-    V2 low{s.x+r*0.14f,s.y+r*0.14f};
-    drawFilledCircle(low,r*0.20f,PIP_SHADOW);
+    drawRecessedPip(p,u,vv,n,20.0f);
   }
 }
 
@@ -205,8 +232,8 @@ void targetRotation(uint8_t value,float &tx,float &ty){
 void startDiceRoll(uint8_t result){
   lastDice=result;
   diceRolling=true;
-  diceLift=145.0f;
-  diceVelocity=-12.0f;
+  diceLift=108.0f;
+  diceVelocity=-18.0f;
   diceSpinX=random(-100,101)/100.0f;
   diceSpinY=random(-120,121)/100.0f;
   diceSpinZ=random(-70,71)/100.0f;
@@ -221,10 +248,12 @@ void updateDicePhysics(){
   float dt=(now-lastPhysicsMs)*0.001f;
   lastPhysicsMs=now;
   if(dt<=0) return;
-  dt=constrain(dt,0.008f,0.045f);
+  dt=constrain(dt,0.008f,0.030f);
 
   // Positive lift = above table. Gravity accelerates the die toward zero.
-  diceVelocity-=24.0f*dt;
+  // Fast, snappy gravity: the die should hit the table quickly rather than
+  // appearing to float downward.
+  diceVelocity-=620.0f*dt;
   diceLift+=diceVelocity*dt;
 
   rotX+=diceSpinX*dt;
@@ -232,26 +261,27 @@ void updateDicePhysics(){
   rotZ+=diceSpinZ*dt;
 
   // Air friction. Rotation becomes progressively calmer.
-  float drag=powf(0.985f,dt*60.0f);
+  float drag=powf(0.955f,dt*60.0f);
   diceSpinX*=drag; diceSpinY*=drag; diceSpinZ*=drag;
 
   if(diceLift<=0.0f){
     diceLift=0.0f;
-    if(fabsf(diceVelocity)>4.0f){
-      // Elastic collision with the table.
-      diceVelocity=-diceVelocity*0.43f;
-      diceSpinX*=0.72f; diceSpinY*=0.72f; diceSpinZ*=0.72f;
+    if(fabsf(diceVelocity)>7.0f){
+      // Short, firm impact. A low restitution makes the die catch itself
+      // quickly instead of repeatedly bouncing high into the air.
+      diceVelocity=-diceVelocity*0.20f;
+      diceSpinX*=0.48f; diceSpinY*=0.48f; diceSpinZ*=0.48f;
     }else{
       diceVelocity=0.0f;
-      diceSpinX*=0.84f; diceSpinY*=0.84f; diceSpinZ*=0.84f;
+      diceSpinX*=0.62f; diceSpinY*=0.62f; diceSpinZ*=0.62f;
 
       float tx,ty;targetRotation(lastDice,tx,ty);
       // Final "catch": critically damp the rotation into the selected face.
       float dx=atan2f(sinf(tx-rotX),cosf(tx-rotX));
       float dy=atan2f(sinf(ty-rotY),cosf(ty-rotY));
-      rotX+=dx*0.18f;
-      rotY+=dy*0.18f;
-      rotZ*=0.82f;
+      rotX+=dx*0.30f;
+      rotY+=dy*0.30f;
+      rotZ*=0.62f;
 
       if(fabsf(dx)<0.015f && fabsf(dy)<0.015f &&
          fabsf(diceSpinX)+fabsf(diceSpinY)+fabsf(diceSpinZ)<0.035f){
