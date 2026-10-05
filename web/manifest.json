@@ -1,0 +1,17 @@
+{
+  "name": "Round Dice Test",
+  "version": "0.1.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "improv": false,
+      "parts": [
+        {
+          "path": "https://github.com/E1d0k4/RoundDice/releases/download/test-latest/round-dice-test-merged.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
