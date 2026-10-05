@@ -35,45 +35,45 @@ jobs:
       - name: Compile
         run: |
           arduino-cli compile --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB" --libraries firmware/RoundDice/libraries --export-binaries --output-dir build/arduino firmware/RoundDice
-      - name: Prepare merged flash image
+      - name: Prepare installer files
         shell: bash
         run: |
           set -euo pipefail
-          MERGED="$(find build/arduino -type f \( -name 'RoundDice.ino.merged.bin' -o -name 'RoundDice.merged.bin' \) | head -n1)"
-          if [ -n "$MERGED" ]; then
-            cp "$MERGED" build/round-dice-test-merged.bin
-            exit 0
-          fi
-
           BOOTLOADER="$(find build/arduino -type f -name 'RoundDice.ino.bootloader.bin' | head -n1)"
           PARTITIONS="$(find build/arduino -type f -name 'RoundDice.ino.partitions.bin' | head -n1)"
           FIRMWARE="$(find build/arduino -type f -name 'RoundDice.ino.bin' | head -n1)"
-          ESPTOOL_DIR="$HOME/.arduino15/packages/esp32/tools/esptool_py/5.3.0"
-          ESPTOOL="$ESPTOOL_DIR/esptool"
-          if [ ! -x "$ESPTOOL" ]; then
-            ESPTOOL="$ESPTOOL_DIR/esptool.py"
-          fi
-          test -n "$BOOTLOADER"
-          test -n "$PARTITIONS"
-          test -n "$FIRMWARE"
-          test -x "$ESPTOOL" -o -f "$ESPTOOL"
-          "$ESPTOOL" --chip esp32s3 merge-bin -o build/round-dice-test-merged.bin --flash-size 16MB 0x0 "$BOOTLOADER" 0x8000 "$PARTITIONS" 0x10000 "$FIRMWARE"
-      - name: Verify merged image
+          BOOT_APP0="$(find "$HOME/.arduino15/packages/esp32/hardware/esp32/3.3.10/tools/partitions" -type f -name 'boot_app0.bin' | head -n1)"
+          test -s "$BOOTLOADER"
+          test -s "$PARTITIONS"
+          test -s "$FIRMWARE"
+          test -s "$BOOT_APP0"
+          cp "$BOOTLOADER" build/round-dice-bootloader.bin
+          cp "$PARTITIONS" build/round-dice-partitions.bin
+          cp "$FIRMWARE" build/round-dice-firmware.bin
+          cp "$BOOT_APP0" build/round-dice-boot_app0.bin
+          ls -lh build/round-dice-*.bin
+      - name: Verify installer files
         run: |
-          test -s build/round-dice-test-merged.bin
-          ls -lh build/round-dice-test-merged.bin
+          test -s build/round-dice-bootloader.bin
+          test -s build/round-dice-partitions.bin
+          test -s build/round-dice-firmware.bin
+          test -s build/round-dice-boot_app0.bin
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: round-dice-test-firmware
-          path: build/round-dice-test-merged.bin
+          path: |
+            build/round-dice-bootloader.bin
+            build/round-dice-partitions.bin
+            build/round-dice-firmware.bin
+            build/round-dice-boot_app0.bin
       - name: Publish installer firmware
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if gh release view test-latest >/dev/null 2>&1; then
-            gh release upload test-latest build/round-dice-test-merged.bin --clobber
+            gh release upload test-latest               build/round-dice-bootloader.bin               build/round-dice-partitions.bin               build/round-dice-firmware.bin               build/round-dice-boot_app0.bin               --clobber
           else
-            gh release create test-latest build/round-dice-test-merged.bin --title "Round Dice Test – latest" --notes "Automatisch erzeugtes Test-Firmware-Image für den Web Installer."
+            gh release create test-latest               build/round-dice-bootloader.bin               build/round-dice-partitions.bin               build/round-dice-firmware.bin               build/round-dice-boot_app0.bin               --title "Round Dice Test – latest"               --notes "Automatisch erzeugte Test-Firmware für den Web Installer."
           fi
