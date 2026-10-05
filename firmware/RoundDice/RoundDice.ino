@@ -7,6 +7,7 @@
 namespace {
 constexpr uint8_t kTouchAddress = CST92XX_SLAVE_ADDRESS;
 constexpr uint8_t kMaxTouchPoints = 2;
+constexpr int16_t kSwipeThreshold = 80;
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
     LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -19,6 +20,9 @@ int16_t touchY[kMaxTouchPoints] = {};
 volatile bool touchPending = false;
 uint8_t lastDice = 6;
 uint32_t lastTouchMs = 0;
+bool menuOpen = false;
+bool trackingSwipe = false;
+int16_t swipeStartY = 0;
 
 void IRAM_ATTR onTouchInterrupt() { touchPending = true; }
 
@@ -37,11 +41,23 @@ void drawTextAt(const char *text, int16_t x, int16_t y, uint8_t size, uint16_t c
   gfx->print(text);
 }
 
-void drawDieFace(uint8_t value) {
+void drawStaticScreen() {
   gfx->fillScreen(RGB565_BLACK);
   drawTextAt("ROUND DICE", 145, 28, 3, RGB565_WHITE);
   drawTextAt("WAVESHARE TEST", 142, 65, 2, RGB565_CYAN);
 
+  gfx->fillRoundRect(112, 365, 242, 58, 20, RGB565_BLUE);
+  gfx->drawRoundRect(112, 365, 242, 58, 20, RGB565_WHITE);
+  drawTextAt("WURFELN", 173, 384, 2, RGB565_WHITE);
+
+  char result[32];
+  snprintf(result, sizeof(result), "D6 = %u", static_cast<unsigned>(lastDice));
+  drawTextAt(result, 196, 445, 2, RGB565_YELLOW);
+}
+
+void drawDieOnly(uint8_t value) {
+  // Nur den Würfelbereich neu zeichnen. Der restliche Bildschirm bleibt stabil.
+  gfx->fillRect(105, 100, 256, 250, RGB565_BLACK);
   gfx->fillRoundRect(123, 118, 220, 220, 30, RGB565_WHITE);
   gfx->drawRoundRect(123, 118, 220, 220, 30, RGB565_CYAN);
 
@@ -62,30 +78,41 @@ void drawDieFace(uint8_t value) {
       pip(0, 0); pip(2, 0); pip(0, 1); pip(2, 1); pip(0, 2); pip(2, 2);
       break;
   }
+}
 
-  gfx->fillRoundRect(112, 365, 242, 58, 20, RGB565_BLUE);
-  gfx->drawRoundRect(112, 365, 242, 58, 20, RGB565_WHITE);
-  drawTextAt("WURFELN", 173, 384, 2, RGB565_WHITE);
-
+void drawResult(uint8_t value) {
+  gfx->fillRect(185, 440, 100, 26, RGB565_BLACK);
   char result[32];
   snprintf(result, sizeof(result), "D6 = %u", static_cast<unsigned>(value));
   drawTextAt(result, 196, 445, 2, RGB565_YELLOW);
 }
 
-void showTouch(int16_t x, int16_t y) {
-  gfx->fillRoundRect(48, 8, 370, 34, 12, RGB565_DARKGREY);
-  char buffer[48];
-  snprintf(buffer, sizeof(buffer), "Touch X:%d Y:%d", x, y);
-  drawTextAt(buffer, 100, 17, 2, RGB565_WHITE);
+void drawDieFace(uint8_t value) {
+  drawStaticScreen();
+  drawDieOnly(value);
+}
+
+void drawMenu() {
+  // Einfaches Pull-down-Menü als eigener UI-Bereich.
+  gfx->fillRoundRect(18, 8, 430, 285, 28, RGB565_DARKGREY);
+  gfx->drawRoundRect(18, 8, 430, 285, 28, RGB565_CYAN);
+  drawTextAt("MENU", 190, 30, 3, RGB565_WHITE);
+  drawTextAt("Einstellungen", 105, 88, 2, RGB565_WHITE);
+  drawTextAt("Spiele", 170, 138, 2, RGB565_WHITE);
+  drawTextAt("Soundboard", 150, 188, 2, RGB565_WHITE);
+  drawTextAt("Info", 198, 238, 2, RGB565_WHITE);
+  drawTextAt("Nach oben wischen = schliessen", 90, 268, 1, RGB565_CYAN);
 }
 
 void rollDice() {
   for (uint8_t i = 0; i < 8; ++i) {
-    drawDieFace(static_cast<uint8_t>(random(1, 7)));
+    drawDieOnly(static_cast<uint8_t>(random(1, 7)));
     delay(55);
   }
+
   lastDice = static_cast<uint8_t>(random(1, 7));
-  drawDieFace(lastDice);
+  drawDieOnly(lastDice);
+  drawResult(lastDice);
   Serial.printf("D6 roll: %u\n", static_cast<unsigned>(lastDice));
 }
 
@@ -143,7 +170,11 @@ void loop() {
   const uint8_t pointLimit =
       supportedPoints < kMaxTouchPoints ? supportedPoints : kMaxTouchPoints;
   const uint8_t touchedPoints = touch.getPoint(touchX, touchY, pointLimit);
-  if (touchedPoints == 0) return;
+
+  if (touchedPoints == 0) {
+    trackingSwipe = false;
+    return;
+  }
 
   const int16_t x = touchX[0];
   const int16_t y = touchY[0];
@@ -151,15 +182,40 @@ void loop() {
   Serial.printf("Touch: X=%d Y=%d points=%u\n",
                 x, y, static_cast<unsigned>(touchedPoints));
 
+  if (!trackingSwipe) {
+    trackingSwipe = true;
+    swipeStartY = y;
+  }
+
+  // Pull-down-Geste: Start nahe am oberen Rand und mindestens 80 px nach unten.
+  if (!menuOpen && swipeStartY <= 90 && y - swipeStartY >= kSwipeThreshold) {
+    menuOpen = true;
+    trackingSwipe = false;
+    drawMenu();
+    Serial.println("Swipe down: menu opened");
+    return;
+  }
+
+  // Pull-up-Geste schliesst das Menü wieder.
+  if (menuOpen && swipeStartY >= 260 && swipeStartY - y >= kSwipeThreshold) {
+    menuOpen = false;
+    trackingSwipe = false;
+    drawDieFace(lastDice);
+    Serial.println("Swipe up: menu closed");
+    return;
+  }
+
+  if (menuOpen) {
+    // Im Menü keine Würfelaktion auslösen.
+    return;
+  }
+
   const uint32_t now = millis();
   if (now - lastTouchMs < 250) return;
   lastTouchMs = now;
 
   if (x >= 112 && x <= 354 && y >= 365 && y <= 423) {
+    trackingSwipe = false;
     rollDice();
-  } else {
-    showTouch(x, y);
-    delay(500);
-    drawDieFace(lastDice);
   }
 }
