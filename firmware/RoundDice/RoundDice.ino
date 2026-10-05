@@ -36,7 +36,11 @@ float rotX=-0.42f,rotY=0.58f,rotZ=0.08f;
 
 const uint16_t BG=RGB565_BLACK;
 const uint16_t WHITE=RGB565_WHITE;
-const uint16_t FACE[6]={0x29A7,0x4A69,0x19A5,0x39C8,0x21C6,0x1164};
+const uint16_t DICE_BASE=0x29A7;
+const uint16_t DICE_BEVEL=0x31C8;
+const uint16_t PIP_DARK=RGB565_BLACK;
+const uint16_t PIP_SHADOW=0x0861;
+
 
 struct V2{float x,y;};
 struct V3{float x,y,z;};
@@ -85,12 +89,34 @@ V3 faceNormal(const Face&q,const V3 v[]){
   return {ab.y*ac.z-ab.z*ac.y,ab.z*ac.x-ab.x*ac.z,ab.x*ac.y-ab.y*ac.x};
 }
 void fillRoundedFace(const Face&q,const V3 v[],uint16_t col){
-  constexpr float k=0.16f;
-  static const float uv[8][2]={{-1+k,-1},{1-k,-1},{1,-1+k},{1,1-k},{1-k,1},{-1+k,1},{-1,1-k},{-1,-1+k}};
-  V2 p[8];for(int i=0;i<8;i++)p[i]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[i][0],uv[i][1]));
-  V2 center=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],0,0));
-  for(int i=0;i<8;i++)fillTriangle(center,p[i],p[(i+1)&7],col);
+  // Full painted face. The bevel is added separately and uses almost the same tone,
+  // so the die reads as one solid piece instead of a wireframe model.
+  V2 p0=project(v[q.a]),p1=project(v[q.b]),p2=project(v[q.c]),p3=project(v[q.d]);
+  fillTriangle(p0,p1,p2,col);fillTriangle(p0,p2,p3,col);
 }
+
+void drawSoftBevel(const Face&q,const V3 v[]){
+  // A narrow inset strip provides rounded/beveled edges without drawing contour lines.
+  constexpr float k=0.055f;
+  static const float uv[8][2]={{-1+k,-1+k},{1-k,-1+k},{1-k,1-k},{-1+k,1-k},
+                               {-1+k*1.9f,-1+k*1.9f},{1-k*1.9f,-1+k*1.9f},
+                               {1-k*1.9f,1-k*1.9f},{-1+k*1.9f,1-k*1.9f}};
+  V2 outer[4],inner[4];
+  outer[0]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[0][0],uv[0][1]));
+  outer[1]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[1][0],uv[1][1]));
+  outer[2]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[2][0],uv[2][1]));
+  outer[3]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[3][0],uv[3][1]));
+  inner[0]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[4][0],uv[4][1]));
+  inner[1]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[5][0],uv[5][1]));
+  inner[2]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[6][0],uv[6][1]));
+  inner[3]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[7][0],uv[7][1]));
+  // Keep the bevel extremely subtle: it is shading, not a line.
+  fillTriangle(outer[0],outer[1],inner[1],DICE_BEVEL);fillTriangle(outer[0],inner[1],inner[0],DICE_BEVEL);
+  fillTriangle(outer[1],outer[2],inner[2],DICE_BEVEL);fillTriangle(outer[1],inner[2],inner[1],DICE_BEVEL);
+  fillTriangle(outer[2],outer[3],inner[3],DICE_BEVEL);fillTriangle(outer[2],inner[3],inner[2],DICE_BEVEL);
+  fillTriangle(outer[3],outer[0],inner[0],DICE_BEVEL);fillTriangle(outer[3],inner[0],inner[3],DICE_BEVEL);
+}
+
 
 void drawRecessedPips(const Face&q,const V3 v[]){
   static const float pips[6][7][2]={
@@ -107,19 +133,19 @@ void drawRecessedPips(const Face&q,const V3 v[]){
   V3 n{u.y*vv.z-u.z*vv.y,u.z*vv.x-u.x*vv.z,u.x*vv.y-u.y*vv.x};
   float nl=sqrtf(n.x*n.x+n.y*n.y+n.z*n.z);if(nl<0.01f)return;
   n.x/=nl;n.y/=nl;n.z/=nl;
-  uint8_t count=q.value;
-  for(uint8_t i=0;i<count;i++){
-    V3 p=facePoint(v[q.a],v[q.b],v[q.c],v[q.d],pips[count-1][i][0],pips[count-1][i][1]);
-    // Move the pit slightly into the die so it reads as a recess, not a nub.
-    p.x-=n.x*2.5f;p.y-=n.y*2.5f;p.z-=n.z*2.5f;
-    V2 s=project(p);float scale=FOCAL/(FOCAL+p.z),r=8.0f*scale;
-    // Dark well, subtle bright rim on the upper-left, and a smaller deep center.
-    drawFilledCircle(s,r,RGB565_BLACK);
-    V2 hi{s.x-r*0.22f,s.y-r*0.22f};
-    drawFilledCircle(hi,r*0.23f,0x9CD3);
-    drawFilledCircle(s,r*0.55f,RGB565_BLACK);
+  for(uint8_t i=0;i<q.value;i++){
+    V3 p=facePoint(v[q.a],v[q.b],v[q.c],v[q.d],pips[q.value-1][i][0],pips[q.value-1][i][1]);
+    p.x-=n.x*3.0f;p.y-=n.y*3.0f;p.z-=n.z*3.0f;
+    V2 s=project(p);float scale=FOCAL/(FOCAL+p.z),r=8.5f*scale;
+    // Deep, dark circular pit. No white dot and no bright ring.
+    drawFilledCircle(s,r,PIP_SHADOW);
+    drawFilledCircle(s,r*0.78f,PIP_DARK);
+    // Tiny offset shadow edge makes the hole read as sunk into the surface.
+    V2 low{s.x+r*0.16f,s.y+r*0.16f};
+    drawFilledCircle(low,r*0.18f,PIP_SHADOW);
   }
 }
+
 
 void draw3DTestCube(){
   clearFrame();
@@ -129,17 +155,20 @@ void draw3DTestCube(){
 
   Face f[6]={{0,1,2,3,1,0},{4,7,6,5,2,0},{0,4,5,1,3,0},{3,2,6,7,4,0},{0,3,7,4,5,0},{1,5,6,2,6,0}};
   for(auto&q:f)q.depth=(v[q.a].z+v[q.b].z+v[q.c].z+v[q.d].z)*.25f;
-  for(int i=0;i<6;i++)for(int j=i+1;j<6;j++)if(f[i].depth<f[j].depth){Face t=f[i];f[i]=f[j];f[j]=t;}
+  for(int i=0;i<6;i++)for(int j=i+1;j<6;j++)if(f[i].depth<f[j].depth){Face tmp=f[i];f[i]=f[j];f[j]=tmp;}
 
   for(const auto&q:f){
     V3 n=faceNormal(q,v);
     if(n.z<=0)continue;
-    fillRoundedFace(q,v,FACE[q.value-1]);
+    // Every visible face has the same paint. This removes the artificial
+    // multi-colour "technical cube" appearance.
+    fillRoundedFace(q,v,DICE_BASE);
+    drawSoftBevel(q,v);
     drawRecessedPips(q,v);
   }
-  // No wireframe: the cube is intentionally painted as solid faces.
   gfx->draw16bitRGBBitmap(0,0,frame,W,H);
 }
+
 
 void drawTextAt(const char*text,int16_t x,int16_t y,uint8_t size,uint16_t color){
   gfx->setTextSize(size);gfx->setTextColor(color);gfx->setCursor(x,y);gfx->print(text);
