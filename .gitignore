@@ -1,0 +1,6 @@
+.DS_Store
+.vscode/
+.arduino/
+build/
+waveshare-board/
+firmware/RoundDice/libraries/
