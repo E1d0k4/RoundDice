@@ -1,9 +1,6 @@
 name: Deploy Round Dice Web Installer
 
 on:
-  push:
-    branches: [main]
-    paths: ["web/**"]
   workflow_run:
     workflows: ["Build Round Dice firmware"]
     types: [completed]
@@ -33,6 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fL --retry 3 -o web/firmware.bin https://github.com/E1d0k4/RoundDice/releases/download/test-latest/round-dice-installer.bin
+          test -s web/firmware.bin
           ls -lh web/firmware.bin
 
       - name: Configure Pages
