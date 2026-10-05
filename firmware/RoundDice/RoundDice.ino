@@ -7,7 +7,9 @@
 namespace {
 constexpr uint8_t kTouchAddress = CST92XX_SLAVE_ADDRESS;
 constexpr uint8_t kMaxTouchPoints = 2;
-constexpr int16_t kSwipeThreshold = 80;
+constexpr int16_t kSwipeThreshold = 70;
+constexpr int16_t kTopSwipeStart = 120;
+constexpr uint32_t kTouchPollMs = 8;
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
     LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -17,22 +19,13 @@ TouchDrvCST92xx touch;
 
 int16_t touchX[kMaxTouchPoints] = {};
 int16_t touchY[kMaxTouchPoints] = {};
-volatile bool touchPending = false;
 uint8_t lastDice = 6;
-uint32_t lastTouchMs = 0;
+uint32_t lastTouchActionMs = 0;
+uint32_t lastTouchPollMs = 0;
 bool menuOpen = false;
+bool touchWasDown = false;
 bool trackingSwipe = false;
 int16_t swipeStartY = 0;
-
-void IRAM_ATTR onTouchInterrupt() { touchPending = true; }
-
-bool takeTouchInterrupt() {
-  noInterrupts();
-  const bool pending = touchPending;
-  touchPending = false;
-  interrupts();
-  return pending;
-}
 
 void drawTextAt(const char *text, int16_t x, int16_t y, uint8_t size, uint16_t color) {
   gfx->setTextSize(size);
@@ -55,18 +48,24 @@ void drawStaticScreen() {
   drawTextAt(result, 196, 445, 2, RGB565_YELLOW);
 }
 
-void drawDieOnly(uint8_t value) {
-  // Nur den Würfelbereich neu zeichnen. Der restliche Bildschirm bleibt stabil.
-  gfx->fillRect(105, 100, 256, 250, RGB565_BLACK);
-  gfx->fillRoundRect(123, 118, 220, 220, 30, RGB565_WHITE);
-  gfx->drawRoundRect(123, 118, 220, 220, 30, RGB565_CYAN);
+const int16_t kDieX = 123;
+const int16_t kDieY = 118;
+const int16_t kDieSize = 220;
+const int16_t kPipX[3] = {178, 233, 288};
+const int16_t kPipY[3] = {173, 228, 283};
+const int16_t kPipRadius = 13;
 
-  const int16_t cx[3] = {178, 233, 288};
-  const int16_t cy[3] = {173, 228, 283};
+void drawPip(int col, int row, uint16_t color) {
+  gfx->fillCircle(kPipX[col], kPipY[row], kPipRadius, color);
+}
 
-  auto pip = [&](int col, int row) {
-    gfx->fillCircle(cx[col], cy[row], 13, RGB565_BLACK);
-  };
+void drawDieBase() {
+  gfx->fillRoundRect(kDieX, kDieY, kDieSize, kDieSize, 30, RGB565_WHITE);
+  gfx->drawRoundRect(kDieX, kDieY, kDieSize, kDieSize, 30, RGB565_CYAN);
+}
+
+void drawDiePips(uint8_t value, uint16_t color) {
+  auto pip = [&](int col, int row) { drawPip(col, row, color); };
 
   switch (value) {
     case 1: pip(1, 1); break;
@@ -80,6 +79,12 @@ void drawDieOnly(uint8_t value) {
   }
 }
 
+void drawDieFace(uint8_t value) {
+  drawStaticScreen();
+  drawDieBase();
+  drawDiePips(value, RGB565_BLACK);
+}
+
 void drawResult(uint8_t value) {
   gfx->fillRect(185, 440, 100, 26, RGB565_BLACK);
   char result[32];
@@ -87,13 +92,7 @@ void drawResult(uint8_t value) {
   drawTextAt(result, 196, 445, 2, RGB565_YELLOW);
 }
 
-void drawDieFace(uint8_t value) {
-  drawStaticScreen();
-  drawDieOnly(value);
-}
-
 void drawMenu() {
-  // Einfaches Pull-down-Menü als eigener UI-Bereich.
   gfx->fillRoundRect(18, 8, 430, 285, 28, RGB565_DARKGREY);
   gfx->drawRoundRect(18, 8, 430, 285, 28, RGB565_CYAN);
   drawTextAt("MENU", 190, 30, 3, RGB565_WHITE);
@@ -105,15 +104,80 @@ void drawMenu() {
 }
 
 void rollDice() {
-  for (uint8_t i = 0; i < 8; ++i) {
-    drawDieOnly(static_cast<uint8_t>(random(1, 7)));
+  drawDieBase();
+  drawDiePips(lastDice, RGB565_BLACK);
+
+  uint8_t previous = lastDice;
+  for (uint8_t i = 0; i < 10; ++i) {
+    drawDiePips(previous, RGB565_WHITE);
+    uint8_t next = static_cast<uint8_t>(random(1, 7));
+    drawDiePips(next, RGB565_BLACK);
+    previous = next;
     delay(55);
   }
 
-  lastDice = static_cast<uint8_t>(random(1, 7));
-  drawDieOnly(lastDice);
+  lastDice = previous;
   drawResult(lastDice);
   Serial.printf("D6 roll: %u\n", static_cast<unsigned>(lastDice));
+}
+
+void processTouch() {
+  const uint8_t supportedPoints = touch.getSupportTouchPoint();
+  const uint8_t pointLimit =
+      supportedPoints < kMaxTouchPoints ? supportedPoints : kMaxTouchPoints;
+  const uint8_t touchedPoints = touch.getPoint(touchX, touchY, pointLimit);
+  const bool isDown = touchedPoints > 0;
+
+  if (!isDown) {
+    if (touchWasDown) {
+      touchWasDown = false;
+      trackingSwipe = false;
+    }
+    return;
+  }
+
+  const int16_t x = touchX[0];
+  const int16_t y = touchY[0];
+
+  if (!touchWasDown) {
+    touchWasDown = true;
+    trackingSwipe = true;
+    swipeStartY = y;
+    Serial.printf("Touch start: X=%d Y=%d\n", x, y);
+    return;
+  }
+
+  if (!trackingSwipe) return;
+
+  // Swipe down: poll the controller continuously while the finger is held.
+  if (!menuOpen && swipeStartY <= kTopSwipeStart &&
+      y - swipeStartY >= kSwipeThreshold) {
+    menuOpen = true;
+    trackingSwipe = false;
+    drawMenu();
+    Serial.println("Swipe down: menu opened");
+    return;
+  }
+
+  if (menuOpen && swipeStartY >= 220 &&
+      swipeStartY - y >= kSwipeThreshold) {
+    menuOpen = false;
+    trackingSwipe = false;
+    drawDieFace(lastDice);
+    Serial.println("Swipe up: menu closed");
+    return;
+  }
+
+  if (menuOpen) return;
+
+  const uint32_t now = millis();
+  if (now - lastTouchActionMs < 300) return;
+
+  if (x >= 112 && x <= 354 && y >= 365 && y <= 423) {
+    lastTouchActionMs = now;
+    trackingSwipe = false;
+    rollDice();
+  }
 }
 
 }  // namespace
@@ -148,9 +212,6 @@ void setup() {
   touch.setMaxCoordinates(LCD_WIDTH, LCD_HEIGHT);
   touch.setMirrorXY(true, true);
 
-  pinMode(TP_INT, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(TP_INT), onTouchInterrupt, FALLING);
-
   randomSeed(static_cast<unsigned long>(micros()));
   drawDieFace(lastDice);
 
@@ -161,61 +222,10 @@ void setup() {
 }
 
 void loop() {
-  if (!takeTouchInterrupt()) {
-    delay(1);
-    return;
-  }
-
-  const uint8_t supportedPoints = touch.getSupportTouchPoint();
-  const uint8_t pointLimit =
-      supportedPoints < kMaxTouchPoints ? supportedPoints : kMaxTouchPoints;
-  const uint8_t touchedPoints = touch.getPoint(touchX, touchY, pointLimit);
-
-  if (touchedPoints == 0) {
-    trackingSwipe = false;
-    return;
-  }
-
-  const int16_t x = touchX[0];
-  const int16_t y = touchY[0];
-
-  Serial.printf("Touch: X=%d Y=%d points=%u\n",
-                x, y, static_cast<unsigned>(touchedPoints));
-
-  if (!trackingSwipe) {
-    trackingSwipe = true;
-    swipeStartY = y;
-  }
-
-  // Pull-down-Geste: Start nahe am oberen Rand und mindestens 80 px nach unten.
-  if (!menuOpen && swipeStartY <= 90 && y - swipeStartY >= kSwipeThreshold) {
-    menuOpen = true;
-    trackingSwipe = false;
-    drawMenu();
-    Serial.println("Swipe down: menu opened");
-    return;
-  }
-
-  // Pull-up-Geste schliesst das Menü wieder.
-  if (menuOpen && swipeStartY >= 260 && swipeStartY - y >= kSwipeThreshold) {
-    menuOpen = false;
-    trackingSwipe = false;
-    drawDieFace(lastDice);
-    Serial.println("Swipe up: menu closed");
-    return;
-  }
-
-  if (menuOpen) {
-    // Im Menü keine Würfelaktion auslösen.
-    return;
-  }
-
   const uint32_t now = millis();
-  if (now - lastTouchMs < 250) return;
-  lastTouchMs = now;
-
-  if (x >= 112 && x <= 354 && y >= 365 && y <= 423) {
-    trackingSwipe = false;
-    rollDice();
+  if (now - lastTouchPollMs >= kTouchPollMs) {
+    lastTouchPollMs = now;
+    processTouch();
   }
+  delay(1);
 }
