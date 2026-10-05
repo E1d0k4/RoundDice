@@ -36,7 +36,7 @@ jobs:
         run: |
           arduino-cli compile --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB" --libraries firmware/RoundDice/libraries --export-binaries --output-dir build/arduino firmware/RoundDice
       - name: Install esptool
-        run: python3 -m pip install --upgrade esptool
+        run: python3 -m pip install "esptool==4.8.1"
       - name: Merge flash image
         shell: bash
         run: |
@@ -47,7 +47,7 @@ jobs:
           test -n "$BOOTLOADER"
           test -n "$PARTITIONS"
           test -n "$FIRMWARE"
-          python3 -m esptool --chip esp32s3 merge-bin -o build/round-dice-test-merged.bin --flash-size 16MB 0x0 "$BOOTLOADER" 0x8000 "$PARTITIONS" 0x10000 "$FIRMWARE"
+          python3 -m esptool --chip esp32s3 merge_bin -o build/round-dice-test-merged.bin --flash_size 16MB 0x0 "$BOOTLOADER" 0x8000 "$PARTITIONS" 0x10000 "$FIRMWARE"
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
