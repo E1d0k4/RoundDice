@@ -35,20 +35,33 @@ jobs:
       - name: Compile
         run: |
           arduino-cli compile --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB" --libraries firmware/RoundDice/libraries --export-binaries --output-dir build/arduino firmware/RoundDice
-      - name: Merge flash image
+      - name: Prepare merged flash image
         shell: bash
         run: |
           set -euo pipefail
-          BOOTLOADER="$(find build/arduino -type f -name 'bootloader.bin' | head -n1)"
-          PARTITIONS="$(find build/arduino -type f -name 'partitions.bin' | head -n1)"
+          MERGED="$(find build/arduino -type f \( -name 'RoundDice.ino.merged.bin' -o -name 'RoundDice.merged.bin' \) | head -n1)"
+          if [ -n "$MERGED" ]; then
+            cp "$MERGED" build/round-dice-test-merged.bin
+            exit 0
+          fi
+
+          BOOTLOADER="$(find build/arduino -type f -name 'RoundDice.ino.bootloader.bin' | head -n1)"
+          PARTITIONS="$(find build/arduino -type f -name 'RoundDice.ino.partitions.bin' | head -n1)"
           FIRMWARE="$(find build/arduino -type f -name 'RoundDice.ino.bin' | head -n1)"
+          ESPTOOL_DIR="$HOME/.arduino15/packages/esp32/tools/esptool_py/5.3.0"
+          ESPTOOL="$ESPTOOL_DIR/esptool"
+          if [ ! -x "$ESPTOOL" ]; then
+            ESPTOOL="$ESPTOOL_DIR/esptool.py"
+          fi
           test -n "$BOOTLOADER"
           test -n "$PARTITIONS"
           test -n "$FIRMWARE"
-          ESPTOOL="$HOME/.arduino15/packages/esp32/tools/esptool_py/5.3.0/esptool.py"
-          test -f "$ESPTOOL"
-          python3 "$ESPTOOL" version
-          python3 "$ESPTOOL" --chip esp32s3 merge-bin -o build/round-dice-test-merged.bin 0x0 "$BOOTLOADER" 0x8000 "$PARTITIONS" 0x10000 "$FIRMWARE"
+          test -x "$ESPTOOL" -o -f "$ESPTOOL"
+          "$ESPTOOL" --chip esp32s3 merge-bin -o build/round-dice-test-merged.bin --flash-size 16MB 0x0 "$BOOTLOADER" 0x8000 "$PARTITIONS" 0x10000 "$FIRMWARE"
+      - name: Verify merged image
+        run: |
+          test -s build/round-dice-test-merged.bin
+          ls -lh build/round-dice-test-merged.bin
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
