@@ -36,8 +36,8 @@ float rotX=-0.42f,rotY=0.58f,rotZ=0.08f;
 
 const uint16_t BG=RGB565_BLACK;
 const uint16_t WHITE=RGB565_WHITE;
-const uint16_t DICE_BASE=0x29A7;
-const uint16_t DICE_BEVEL=0x31C8;
+const uint16_t DICE_BASE=RGB565_WHITE;
+const uint16_t DICE_BEVEL=RGB565_WHITE;
 const uint16_t PIP_DARK=RGB565_BLACK;
 const uint16_t PIP_SHADOW=0x0861;
 
@@ -136,7 +136,7 @@ void drawRecessedPips(const Face&q,const V3 v[]){
   for(uint8_t i=0;i<q.value;i++){
     V3 p=facePoint(v[q.a],v[q.b],v[q.c],v[q.d],pips[q.value-1][i][0],pips[q.value-1][i][1]);
     p.x-=n.x*3.0f;p.y-=n.y*3.0f;p.z-=n.z*3.0f;
-    V2 s=project(p);float scale=FOCAL/(FOCAL+p.z),r=8.5f*scale;
+    V2 s=project(p);float scale=FOCAL/(FOCAL+p.z),r=16.0f*scale;
     // Deep, dark circular pit. No white dot and no bright ring.
     drawFilledCircle(s,r,PIP_SHADOW);
     drawFilledCircle(s,r*0.78f,PIP_DARK);
