@@ -198,7 +198,7 @@ void setup(){
   qmi.enableAccelerometer();
 
   randomSeed((unsigned long)micros());
-  drawStaticScreen(); renderCube(false);
+  drawStaticScreen(); draw3DTestCube();
   Serial.println("Round Dice true 3D renderer ready.");
 }
 
