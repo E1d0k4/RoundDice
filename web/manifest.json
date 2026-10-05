@@ -8,7 +8,7 @@
       "improv": false,
       "parts": [
         {
-          "path": "https://github.com/E1d0k4/RoundDice/releases/download/test-latest/round-dice-test-merged.bin",
+          "path": "firmware.bin",
           "offset": 0
         }
       ]
