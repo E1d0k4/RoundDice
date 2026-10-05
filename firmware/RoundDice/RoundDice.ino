@@ -22,11 +22,18 @@ int16_t touchX[kMaxTouchPoints]={},touchY[kMaxTouchPoints]={}; uint32_t lastTouc
 uint8_t lastDice=6; bool menuOpen=false,touchWasDown=false,trackingSwipe=false; int16_t swipeStartY=0,swipeMinY=0,swipeMaxY=0;
 float lastAccelX=0,lastAccelY=0,lastAccelZ=1; bool imuReady=false; uint16_t *frame=nullptr;
 constexpr int16_t W=LCD_WIDTH,H=LCD_HEIGHT; constexpr float CUBE=178.0f,FOCAL=500.0f,CX=233.0f,CY=232.0f;
-float rotX=-0.42f,rotY=0.58f,rotZ=0.08f;
-float diceX=0.0f,diceY=0.0f,diceHeight=0.0f;
-float diceVX=0.0f,diceVY=0.0f,diceVZ=0.0f;
-float diceSpinX=0.0f,diceSpinY=0.0f,diceSpinZ=0.0f;
-uint8_t diceBounces=0; bool diceRolling=false; uint32_t lastPhysicsMs=0;
+struct Dice3D {
+  uint8_t type=6,value=6;
+  bool isHeld=false,isSettled=true;
+  float x=0,y=0,z=0;
+  float vx=0,vy=0,vz=0;
+  float rotX=-0.42f,rotY=0.58f,rotZ=0.08f;
+  float rotVelX=0,rotVelY=0,rotVelZ=0;
+  uint8_t bounces=0;
+};
+Dice3D die;
+bool diceRolling=false;
+uint32_t lastPhysicsMs=0;
 const uint16_t BG=RGB565_BLACK,WHITE=RGB565_WHITE,DICE_BASE=RGB565_WHITE,DICE_BEVEL=RGB565_WHITE,PIP_DARK=RGB565_BLACK,PIP_SHADOW=0x0861;
 struct V2{float x,y;}; struct V3{float x,y,z;}; struct Face{uint8_t a,b,c,d,value;float depth;};
 inline void px(int x,int y,uint16_t c){if((unsigned)x<W&&(unsigned)y<H)frame[y*W+x]=c;} void clearFrame(){memset(frame,0,W*H*sizeof(uint16_t));}
@@ -40,69 +47,38 @@ void fillRoundedFace(const Face&q,const V3 v[],uint16_t col){V2 p0=project(v[q.a
 void drawSoftBevel(const Face&q,const V3 v[]){(void)q;(void)v;}
 void drawRecessedPip(V3 center,V3 u,V3 vv,V3 n,float radius){constexpr int SEG=20,RINGS=5;const uint16_t shade[RINGS]={0x3186,0x20E4,0x18C3,0x1062,RGB565_BLACK};for(int r=0;r<RINGS-1;r++){float t=(float)r/(RINGS-1),rr=radius*(1-.76f*t),depth=7*t,t2=(float)(r+1)/(RINGS-1),rr2=radius*(1-.76f*t2),depth2=7*t2;V3 ringA[SEG],ringB[SEG];for(int i=0;i<SEG;i++){float a=2*PI*i/SEG,ca=cosf(a),sa=sinf(a);ringA[i]={center.x+u.x*(ca*rr)+vv.x*(sa*rr)-n.x*depth,center.y+u.y*(ca*rr)+vv.y*(sa*rr)-n.y*depth,center.z+u.z*(ca*rr)+vv.z*(sa*rr)-n.z*depth};ringB[i]={center.x+u.x*(ca*rr2)+vv.x*(sa*rr2)-n.x*depth2,center.y+u.y*(ca*rr2)+vv.y*(sa*rr2)-n.y*depth2,center.z+u.z*(ca*rr2)+vv.z*(sa*rr2)-n.z*depth2};}for(int i=0;i<SEG;i++){int j=(i+1)%SEG;fillTriangle(project(ringA[i]),project(ringA[j]),project(ringB[j]),shade[r]);fillTriangle(project(ringA[i]),project(ringB[j]),project(ringB[i]),shade[r]);}}V3 bottom{center.x-n.x*7,center.y-n.y*7,center.z-n.z*7};float scale=FOCAL/(FOCAL+bottom.z);drawFilledCircle(project(bottom),radius*.24f*scale,RGB565_BLACK);}
 void drawRecessedPips(const Face&q,const V3 v[]){static const float pips[6][7][2]={{{0,0}},{{-.50f,-.50f},{.50f,.50f}},{{-.50f,-.50f},{0,0},{.50f,.50f}},{{-.50f,-.50f},{.50f,-.50f},{-.50f,.50f},{.50f,.50f}},{{-.50f,-.50f},{.50f,-.50f},{0,0},{-.50f,.50f},{.50f,.50f}},{{-.50f,-.56f},{-.50f,0},{-.50f,.56f},{.50f,-.56f},{.50f,0},{.50f,.56f}}};V3 A=v[q.a],B=v[q.b],D=v[q.d],u{B.x-A.x,B.y-A.y,B.z-A.z},vv{D.x-A.x,D.y-A.y,D.z-A.z};float ul=sqrtf(u.x*u.x+u.y*u.y+u.z*u.z),vl=sqrtf(vv.x*vv.x+vv.y*vv.y+vv.z*vv.z);if(ul<1||vl<1)return;u.x/=ul;u.y/=ul;u.z/=ul;vv.x/=vl;vv.y/=vl;vv.z/=vl;V3 n{u.y*vv.z-u.z*vv.y,u.z*vv.x-u.x*vv.z,u.x*vv.y-u.y*vv.x};float nl=sqrtf(n.x*n.x+n.y*n.y+n.z*n.z);if(nl<.01f)return;n.x/=nl;n.y/=nl;n.z/=nl;for(uint8_t i=0;i<q.value;i++){V3 p=facePoint(v[q.a],v[q.b],v[q.c],v[q.d],pips[q.value-1][i][0],pips[q.value-1][i][1]);drawRecessedPip(p,u,vv,n,20);}}
-void drawTableShadow(){float h=constrain(diceHeight,0.0f,220.0f);float s=constrain(1.0f+h/180.0f,1.0f,2.0f);V2 c{CX+diceX,CY+diceY+112};for(int i=10;i>=1;i--){float rr=(82.0f*s)*i/10.0f;uint16_t shade=(uint16_t)(0x0841+(10-i)*0x0180);drawFilledCircle({c.x,c.y+6},rr,shade);}}
-void draw3DTestCube(){clearFrame();drawTableShadow();float h=CUBE/2;V3 v[8]={{-h,-h,-h},{h,-h,-h},{h,h,-h},{-h,h,-h},{-h,-h,h},{h,-h,h},{h,h,h},{-h,h,h}};for(auto&p:v){p=rotate(p);p.x+=diceX;p.y+=diceY-diceHeight;}Face f[6]={{0,1,2,3,1,0},{4,7,6,5,2,0},{0,4,5,1,3,0},{3,2,6,7,4,0},{0,3,7,4,5,0},{1,5,6,2,6,0}};for(auto&q:f)q.depth=(v[q.a].z+v[q.b].z+v[q.c].z+v[q.d].z)*.25f;for(int i=0;i<6;i++)for(int j=i+1;j<6;j++)if(f[i].depth<f[j].depth){Face tmp=f[i];f[i]=f[j];f[j]=tmp;}for(const auto&q:f){V3 n=faceNormal(q,v);if(n.z<=0)continue;fillRoundedFace(q,v,DICE_BASE);drawRecessedPips(q,v);}gfx->draw16bitRGBBitmap(0,0,frame,W,H);}
+void drawTableShadow(){float h=constrain(die.z,0.0f,300.0f);float sc=constrain(1.0f+h/180.0f,1.0f,2.0f);V2 c{CX+die.x,CY+die.y+112};for(int i=10;i>=1;i--){float rr=(82.0f*sc)*i/10.0f;uint16_t shade=(uint16_t)(0x0841+(10-i)*0x0180);drawFilledCircle({c.x,c.y+6},rr,shade);}}
+void draw3DTestCube(){clearFrame();drawTableShadow();float h=CUBE/2;V3 v[8]={{-h,-h,-h},{h,-h,-h},{h,h,-h},{-h,h,-h},{-h,-h,h},{h,-h,h},{h,h,h},{-h,h,h}};rotX=die.rotX;rotY=die.rotY;rotZ=die.rotZ;for(auto&p:v){p=rotate(p);p.x+=die.x;p.y+=die.y-die.z;}Face f[6]={{0,1,2,3,1,0},{4,7,6,5,2,0},{0,4,5,1,3,0},{3,2,6,7,4,0},{0,3,7,4,5,0},{1,5,6,2,6,0}};for(auto&q:f)q.depth=(v[q.a].z+v[q.b].z+v[q.c].z+v[q.d].z)*.25f;for(int i=0;i<6;i++)for(int j=i+1;j<6;j++)if(f[i].depth<f[j].depth){Face tmp=f[i];f[i]=f[j];f[j]=tmp;}for(const auto&q:f){V3 n=faceNormal(q,v);if(n.z<=0)continue;fillRoundedFace(q,v,DICE_BASE);drawRecessedPips(q,v);}gfx->draw16bitRGBBitmap(0,0,frame,W,H);}
 void targetRotation(uint8_t value,float &tx,float &ty){switch(value){case 1:tx=0;ty=0;break;case 2:tx=0;ty=PI;break;case 3:tx=PI*.5f;ty=0;break;case 4:tx=-PI*.5f;ty=0;break;case 5:tx=0;ty=-PI*.5f;break;default:tx=0;ty=PI*.5f;break;}}
 void startDiceRoll(uint8_t result){
-  lastDice=result; diceRolling=true; diceBounces=0;
-  diceX=random(-55,56); diceY=random(-35,36);
-  diceHeight=random(175,231);
-  diceVX=random(-95,96); diceVY=random(-70,71); diceVZ=random(-20,21);
-  diceSpinX=random(-2100,2101)/100.0f;
-  diceSpinY=random(-2500,2501)/100.0f;
-  diceSpinZ=random(-1500,1501)/100.0f;
+  lastDice=result; die.value=result; die.isHeld=false; die.isSettled=false; die.bounces=0; diceRolling=true;
+  die.x=random(-95,96); die.y=random(-55,56); die.z=random(180,301);
+  die.vx=random(-15,16); die.vy=random(-10,21); die.vz=-random(5,13);
+  die.rotVelX=random(15,46); die.rotVelY=random(15,46); die.rotVelZ=random(15,46);
+  die.rotX=random(-314,315)/100.0f; die.rotY=random(-314,315)/100.0f; die.rotZ=random(-314,315)/100.0f;
   lastPhysicsMs=millis();
 }
-void drawResult();
 void updateDicePhysics(){
-  if(!diceRolling)return;
-  uint32_t now=millis();
-  float dt=(now-lastPhysicsMs)*0.001f;
-  lastPhysicsMs=now;
-  if(dt<0.008f)return;
-  dt=constrain(dt,0.008f,0.020f);
-
-  diceVZ-=2850.0f*dt;
-  diceX+=diceVX*dt;
-  diceY+=diceVY*dt;
-  diceHeight+=diceVZ*dt;
-  rotX+=diceSpinX*dt; rotY+=diceSpinY*dt; rotZ+=diceSpinZ*dt;
-
-  float linearDrag=powf(0.94f,dt*60.0f);
-  float angularDrag=powf(0.965f,dt*60.0f);
-  diceVX*=linearDrag; diceVY*=linearDrag;
-  diceSpinX*=angularDrag; diceSpinY*=angularDrag; diceSpinZ*=angularDrag;
-
-  diceX=constrain(diceX,-105.0f,105.0f);
-  diceY=constrain(diceY,-55.0f,55.0f);
-
-  if(diceHeight<=0.0f){
-    diceHeight=0.0f;
-    float impact=fabsf(diceVZ);
-    if(diceBounces<2 && impact>75.0f){
-      diceBounces++;
-      diceVZ=impact*(diceBounces==1?0.34f:0.16f);
-      diceVX*=diceBounces==1?0.62f:0.40f;
-      diceVY*=diceBounces==1?0.62f:0.40f;
-      diceSpinX*=diceBounces==1?0.58f:0.34f;
-      diceSpinY*=diceBounces==1?0.58f:0.34f;
-      diceSpinZ*=diceBounces==1?0.52f:0.30f;
-    }else{
-      diceVZ=0.0f;
-      diceVX*=0.55f; diceVY*=0.55f;
-      diceSpinX*=0.70f; diceSpinY*=0.70f; diceSpinZ*=0.62f;
-
-      float tx,ty; targetRotation(lastDice,tx,ty);
-      float dx=atan2f(sinf(tx-rotX),cosf(tx-rotX));
-      float dy=atan2f(sinf(ty-rotY),cosf(ty-rotY));
-      float settleSpeed=constrain((fabsf(diceSpinX)+fabsf(diceSpinY))*0.035f,0.06f,0.28f);
-      rotX+=dx*settleSpeed; rotY+=dy*settleSpeed; rotZ*=0.72f;
-      if(fabsf(dx)<0.014f && fabsf(dy)<0.014f && fabsf(diceVX)+fabsf(diceVY)<5.0f && fabsf(diceSpinX)+fabsf(diceSpinY)+fabsf(diceSpinZ)<0.16f){
-        rotX=tx; rotY=ty; rotZ=0.0f;
-        diceRolling=false;
-        draw3DTestCube(); drawResult(); return;
-      }
+  if(!diceRolling||die.isSettled||die.isHeld)return;
+  uint32_t now=millis(); if(now-lastPhysicsMs<16)return; lastPhysicsMs=now;
+  const float gravity=-0.8f,bounceDamping=0.55f,friction=0.92f;
+  die.vz+=gravity; die.x+=die.vx; die.y+=die.vy; die.z+=die.vz;
+  die.rotX+=die.rotVelX; die.rotY+=die.rotVelY; die.rotZ+=die.rotVelZ;
+  if(die.x<-105){die.x=-105;die.vx=fabsf(die.vx)*0.65f;} if(die.x>105){die.x=105;die.vx=-fabsf(die.vx)*0.65f;}
+  if(die.y<-55){die.y=-55;die.vy=fabsf(die.vy)*0.65f;} if(die.y>55){die.y=55;die.vy=-fabsf(die.vy)*0.65f;}
+  if(die.z<=0){
+    die.z=0; die.vz=-die.vz*bounceDamping; die.vx*=friction; die.vy*=friction;
+    die.rotVelX*=friction; die.rotVelY*=friction; die.rotVelZ*=friction;
+    if(die.bounces<3 && fabsf(die.vz)>=1.0f)die.bounces++;
+    if(fabsf(die.vz)<1.0f&&fabsf(die.vx)<0.5f&&fabsf(die.vy)<0.5f){
+      die.isSettled=true; die.vz=die.vx=die.vy=0; die.rotVelX*=0.35f; die.rotVelY*=0.35f; die.rotVelZ*=0.30f;
     }
+  }
+  if(die.isSettled){
+    float tx,ty; targetRotation(die.value,tx,ty);
+    float dx=atan2f(sinf(tx-die.rotX),cosf(tx-die.rotX)),dy=atan2f(sinf(ty-die.rotY),cosf(ty-die.rotY));
+    die.rotX+=dx*0.38f; die.rotY+=dy*0.38f; die.rotZ*=0.35f;
+    if(fabsf(dx)<0.018f&&fabsf(dy)<0.018f){die.rotX=tx;die.rotY=ty;die.rotZ=0;diceRolling=false;}
   }
   draw3DTestCube();
 }
