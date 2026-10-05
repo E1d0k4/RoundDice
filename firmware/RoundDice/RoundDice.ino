@@ -8,7 +8,6 @@ namespace {
 constexpr uint8_t kTouchAddress = CST92XX_SLAVE_ADDRESS;
 constexpr uint8_t kMaxTouchPoints = 2;
 constexpr int16_t kSwipeThreshold = 70;
-constexpr int16_t kTopSwipeStart = 120;
 constexpr uint32_t kTouchPollMs = 8;
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
@@ -26,6 +25,8 @@ bool menuOpen = false;
 bool touchWasDown = false;
 bool trackingSwipe = false;
 int16_t swipeStartY = 0;
+int16_t swipeMinY = 0;
+int16_t swipeMaxY = 0;
 
 void drawTextAt(const char *text, int16_t x, int16_t y, uint8_t size, uint16_t color) {
   gfx->setTextSize(size);
@@ -103,20 +104,29 @@ void drawMenu() {
   drawTextAt("Nach oben wischen = schliessen", 90, 268, 1, RGB565_CYAN);
 }
 
-void rollDice() {
+void animateDice(uint8_t to) {
+  uint8_t frame = lastDice;
   drawDieBase();
-  drawDiePips(lastDice, RGB565_BLACK);
 
-  uint8_t previous = lastDice;
   for (uint8_t i = 0; i < 10; ++i) {
-    drawDiePips(previous, RGB565_WHITE);
-    uint8_t next = static_cast<uint8_t>(random(1, 7));
+    const uint8_t next = (i == 9) ? to : static_cast<uint8_t>(random(1, 7));
+
+    // Only repaint the interior of the die. The border stays untouched.
+    gfx->fillRoundRect(kDieX + 20, kDieY + 20, kDieSize - 40,
+                       kDieSize - 40, 20, RGB565_WHITE);
     drawDiePips(next, RGB565_BLACK);
-    previous = next;
+    frame = next;
     delay(55);
   }
 
-  lastDice = previous;
+  drawDieBase();
+  drawDiePips(frame, RGB565_BLACK);
+}
+
+void rollDice() {
+  const uint8_t result = static_cast<uint8_t>(random(1, 7));
+  animateDice(result);
+  lastDice = result;
   drawResult(lastDice);
   Serial.printf("D6 roll: %u\n", static_cast<unsigned>(lastDice));
 }
@@ -130,6 +140,21 @@ void processTouch() {
 
   if (!isDown) {
     if (touchWasDown) {
+      const int16_t totalDown = swipeMaxY - swipeStartY;
+      const int16_t totalUp = swipeStartY - swipeMinY;
+
+      if (trackingSwipe) {
+        if (!menuOpen && totalDown >= kSwipeThreshold) {
+          menuOpen = true;
+          drawMenu();
+          Serial.println("Swipe down: menu opened");
+        } else if (menuOpen && totalUp >= kSwipeThreshold) {
+          menuOpen = false;
+          drawDieFace(lastDice);
+          Serial.println("Swipe up: menu closed");
+        }
+      }
+
       touchWasDown = false;
       trackingSwipe = false;
     }
@@ -143,32 +168,21 @@ void processTouch() {
     touchWasDown = true;
     trackingSwipe = true;
     swipeStartY = y;
+    swipeMinY = y;
+    swipeMaxY = y;
     Serial.printf("Touch start: X=%d Y=%d\n", x, y);
     return;
   }
 
   if (!trackingSwipe) return;
 
-  // Swipe down: poll the controller continuously while the finger is held.
-  if (!menuOpen && swipeStartY <= kTopSwipeStart &&
-      y - swipeStartY >= kSwipeThreshold) {
-    menuOpen = true;
-    trackingSwipe = false;
-    drawMenu();
-    Serial.println("Swipe down: menu opened");
-    return;
-  }
-
-  if (menuOpen && swipeStartY >= 220 &&
-      swipeStartY - y >= kSwipeThreshold) {
-    menuOpen = false;
-    trackingSwipe = false;
-    drawDieFace(lastDice);
-    Serial.println("Swipe up: menu closed");
-    return;
-  }
+  if (y < swipeMinY) swipeMinY = y;
+  if (y > swipeMaxY) swipeMaxY = y;
 
   if (menuOpen) return;
+
+  const int16_t movement = abs(y - swipeStartY);
+  if (movement >= kSwipeThreshold) return;
 
   const uint32_t now = millis();
   if (now - lastTouchActionMs < 300) return;
