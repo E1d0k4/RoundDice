@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <math.h>
 #include "Arduino_GFX_Library.h"
 #include "TouchDrvCSTXXX.hpp"
 #include "SensorQMI8658.hpp"
@@ -12,7 +13,7 @@ constexpr int16_t kSwipeThreshold = 70;
 constexpr uint32_t kTouchPollMs = 8;
 constexpr uint32_t kImuPollMs = 20;
 constexpr uint32_t kRollCooldownMs = 500;
-constexpr float kShakeThreshold = 1.65f;
+constexpr float kShakeThreshold = 2.20f;
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
     LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -26,7 +27,6 @@ int16_t touchX[kMaxTouchPoints] = {};
 int16_t touchY[kMaxTouchPoints] = {};
 uint8_t lastDice = 6;
 
-uint32_t lastTouchActionMs = 0;
 uint32_t lastTouchPollMs = 0;
 uint32_t lastImuPollMs = 0;
 uint32_t lastRollMs = 0;
@@ -43,18 +43,25 @@ float lastAccelY = 0.0f;
 float lastAccelZ = 1.0f;
 bool imuReady = false;
 
-constexpr int16_t kDieSize = 220;
-constexpr int16_t kDieHomeX = 123;
-constexpr int16_t kDieHomeY = 112;
-int16_t dieX = kDieHomeX;
-int16_t dieY = kDieHomeY;
+constexpr int16_t kCubeW = 184;
+constexpr int16_t kCubeH = 184;
+constexpr int16_t kCubeDepth = 42;
+constexpr int16_t kCubeHomeX = 141;
+constexpr int16_t kCubeHomeY = 116;
 
-const uint16_t kDieFace = 0x18E3;
-const uint16_t kDieFaceLight = 0x2D26;
-const uint16_t kDieEdge = RGB565_CYAN;
-const uint16_t kDieShadow = 0x0841;
-const uint16_t kDieHighlight = 0x7DFF;
-const uint16_t kPipColor = RGB565_WHITE;
+int16_t cubeX = kCubeHomeX;
+int16_t cubeY = kCubeHomeY;
+
+const uint16_t kBackground = RGB565_BLACK;
+const uint16_t kFront = 0x18E3;
+const uint16_t kFrontLight = 0x2D26;
+const uint16_t kTop = 0x3D55;
+const uint16_t kRight = 0x10A3;
+const uint16_t kEdge = RGB565_CYAN;
+const uint16_t kEdgeSoft = 0x5E9F;
+const uint16_t kHighlight = 0xAFFF;
+const uint16_t kShadow = 0x0841;
+const uint16_t kPip = RGB565_WHITE;
 
 void drawTextAt(const char *text, int16_t x, int16_t y, uint8_t size, uint16_t color) {
   gfx->setTextSize(size);
@@ -64,58 +71,143 @@ void drawTextAt(const char *text, int16_t x, int16_t y, uint8_t size, uint16_t c
 }
 
 void drawStaticScreen() {
-  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillScreen(kBackground);
   drawTextAt("ROUND DICE", 145, 25, 3, RGB565_WHITE);
-  drawTextAt("MOTION DICE", 151, 62, 2, RGB565_CYAN);
+  drawTextAt("3D MOTION", 162, 62, 2, RGB565_CYAN);
+  drawTextAt("TOUCH  •  SHAKE  •  TILT", 130, 447, 1, RGB565_CYAN);
 
-  drawTextAt("ANTIPPEN  •  SCHÜTTELN", 112, 447, 1, RGB565_CYAN);
   char result[20];
   snprintf(result, sizeof(result), "D6  %u", static_cast<unsigned>(lastDice));
   drawTextAt(result, 210, 425, 2, RGB565_YELLOW);
 }
 
-void drawPip(int col, int row, uint16_t color) {
-  static const int16_t dx[3] = {55, 110, 165};
-  static const int16_t dy[3] = {55, 110, 165};
-  gfx->fillCircle(dieX + dx[col], dieY + dy[row], 13, color);
+void clearCubeArea() {
+  // The cube and its motion envelope stay clear of the title and footer.
+  gfx->fillRect(95, 88, 280, 285, kBackground);
 }
 
-void drawDieBase() {
-  gfx->fillRoundRect(dieX + 8, dieY + 10, kDieSize, kDieSize, 34, kDieShadow);
-  gfx->fillRoundRect(dieX, dieY, kDieSize, kDieSize, 34, kDieFace);
-  gfx->fillRoundRect(dieX + 8, dieY + 8, kDieSize - 16, kDieSize - 16, 27, kDieFaceLight);
-  gfx->drawRoundRect(dieX, dieY, kDieSize, kDieSize, 34, kDieEdge);
-  gfx->drawRoundRect(dieX + 4, dieY + 4, kDieSize - 8, kDieSize - 8, 30, kDieHighlight);
-
-  gfx->fillRoundRect(dieX + 18, dieY + 16, 72, 10, 5, kDieHighlight);
+void drawResult(uint8_t value) {
+  gfx->fillRect(195, 418, 80, 28, kBackground);
+  char result[20];
+  snprintf(result, sizeof(result), "D6  %u", static_cast<unsigned>(value));
+  drawTextAt(result, 210, 425, 2, RGB565_YELLOW);
 }
 
-void drawDiePips(uint8_t value, uint16_t color) {
-  auto pip = [&](int col, int row) { drawPip(col, row, color); };
+void drawPip(int16_t x, int16_t y, int16_t radius = 11) {
+  gfx->fillCircle(x, y, radius + 2, 0x0000);
+  gfx->fillCircle(x, y, radius, kPip);
+}
+
+void drawFrontPips(uint8_t value, int16_t x, int16_t y, int16_t size) {
+  const int16_t left = x + size / 4;
+  const int16_t mid = x + size / 2;
+  const int16_t right = x + (size * 3) / 4;
+  const int16_t top = y + size / 4;
+  const int16_t center = y + size / 2;
+  const int16_t bottom = y + (size * 3) / 4;
 
   switch (value) {
-    case 1: pip(1, 1); break;
-    case 2: pip(0, 0); pip(2, 2); break;
-    case 3: pip(0, 0); pip(1, 1); pip(2, 2); break;
-    case 4: pip(0, 0); pip(2, 0); pip(0, 2); pip(2, 2); break;
-    case 5: pip(0, 0); pip(2, 0); pip(1, 1); pip(0, 2); pip(2, 2); break;
+    case 1:
+      drawPip(mid, center);
+      break;
+    case 2:
+      drawPip(left, top);
+      drawPip(right, bottom);
+      break;
+    case 3:
+      drawPip(left, top);
+      drawPip(mid, center);
+      drawPip(right, bottom);
+      break;
+    case 4:
+      drawPip(left, top);
+      drawPip(right, top);
+      drawPip(left, bottom);
+      drawPip(right, bottom);
+      break;
+    case 5:
+      drawPip(left, top);
+      drawPip(right, top);
+      drawPip(mid, center);
+      drawPip(left, bottom);
+      drawPip(right, bottom);
+      break;
     case 6:
-      pip(0, 0); pip(2, 0); pip(0, 1); pip(2, 1); pip(0, 2); pip(2, 2);
+      drawPip(left, top);
+      drawPip(right, top);
+      drawPip(left, center);
+      drawPip(right, center);
+      drawPip(left, bottom);
+      drawPip(right, bottom);
       break;
   }
 }
 
-void drawDieFace(uint8_t value) {
-  drawStaticScreen();
-  drawDieBase();
-  drawDiePips(value, kPipColor);
+void drawCube(uint8_t value, float tiltX = 0.0f, float tiltY = 0.0f) {
+  const int16_t x = cubeX + static_cast<int16_t>(tiltX);
+  const int16_t y = cubeY + static_cast<int16_t>(tiltY);
+  const int16_t f = kCubeW;
+  const int16_t d = kCubeDepth;
+
+  // Three visible faces: top, right and front.
+  int16_t fx0 = x;
+  int16_t fy0 = y + d;
+  int16_t fx1 = x + f;
+  int16_t fy1 = y + d;
+  int16_t fx2 = x + f;
+  int16_t fy2 = y + d + f;
+  int16_t fx3 = x;
+  int16_t fy3 = y + d + f;
+
+  int16_t tx0 = x;
+  int16_t ty0 = y + d;
+  int16_t tx1 = x + d;
+  int16_t ty1 = y;
+  int16_t tx2 = x + f + d;
+  int16_t ty2 = y;
+  int16_t tx3 = x + f;
+  int16_t ty3 = y + d;
+
+  int16_t rx0 = x + f;
+  int16_t ry0 = y + d;
+  int16_t rx1 = x + f + d;
+  int16_t ry1 = y;
+  int16_t rx2 = x + f + d;
+  int16_t ry2 = y + f;
+  int16_t rx3 = x + f;
+  int16_t ry3 = y + d + f;
+
+  // Soft shadow, then faces.
+  gfx->fillRoundRect(x + 10, y + d + 10, f + d + 8, f + 8, 18, kShadow);
+
+  gfx->fillTriangle(tx0, ty0, tx1, ty1, tx2, ty2, kTop);
+  gfx->fillTriangle(tx0, ty0, tx2, ty2, tx3, ty3, kTop);
+
+  gfx->fillTriangle(rx0, ry0, rx1, ry1, rx2, ry2, kRight);
+  gfx->fillTriangle(rx0, ry0, rx2, ry2, rx3, ry3, kRight);
+
+  gfx->fillRect(fx0, fy0, f, f, kFront);
+  gfx->fillRect(fx0 + 7, fy0 + 7, f - 14, f - 14, kFrontLight);
+
+  // Strong outer edges make the 3D geometry readable on AMOLED.
+  gfx->drawLine(tx0, ty0, tx1, ty1, kEdge);
+  gfx->drawLine(tx1, ty1, tx2, ty2, kEdgeSoft);
+  gfx->drawLine(tx2, ty2, tx3, ty3, kEdge);
+  gfx->drawLine(rx1, ry1, rx2, ry2, kEdgeSoft);
+  gfx->drawLine(rx2, ry2, rx3, ry3, kEdge);
+  gfx->drawRect(fx0, fy0, f, f, kEdge);
+  gfx->drawRect(fx0 + 4, fy0 + 4, f - 8, f - 8, kHighlight);
+
+  // Top-face highlight.
+  gfx->drawLine(tx0 + 8, ty0 - 2, tx1 + 8, ty1 + 2, kHighlight);
+  gfx->drawLine(tx1 + 8, ty1 + 2, tx2 - 8, ty2 + 2, kHighlight);
+
+  drawFrontPips(value, fx0, fy0, f);
 }
 
-void drawResult(uint8_t value) {
-  gfx->fillRect(195, 418, 80, 28, RGB565_BLACK);
-  char result[20];
-  snprintf(result, sizeof(result), "D6  %u", static_cast<unsigned>(value));
-  drawTextAt(result, 210, 425, 2, RGB565_YELLOW);
+void drawScene() {
+  clearCubeArea();
+  drawCube(lastDice);
 }
 
 void drawMenu() {
@@ -130,25 +222,25 @@ void drawMenu() {
 }
 
 void animateDice(uint8_t to) {
-  const int16_t homeX = dieX;
-  const int16_t homeY = dieY;
+  const int16_t homeX = cubeX;
+  const int16_t homeY = cubeY;
 
-  for (uint8_t i = 0; i < 14; ++i) {
-    const uint8_t next = (i == 13) ? to : static_cast<uint8_t>(random(1, 7));
-    const float phase = static_cast<float>(i) * 0.65f;
-    dieX = homeX + static_cast<int16_t>(sinf(phase) * (18.0f - i));
-    dieY = homeY + static_cast<int16_t>(cosf(phase * 1.15f) * (12.0f - i / 2));
+  for (uint8_t i = 0; i < 18; ++i) {
+    const uint8_t next = (i == 17) ? to : static_cast<uint8_t>(random(1, 7));
+    const float phase = static_cast<float>(i) * 0.55f;
+    const float travel = 18.0f - static_cast<float>(i) * 0.8f;
 
-    gfx->fillScreen(RGB565_BLACK);
-    drawStaticScreen();
-    drawDieBase();
-    drawDiePips(next, kPipColor);
-    delay(35);
+    cubeX = homeX + static_cast<int16_t>(sinf(phase) * travel);
+    cubeY = homeY + static_cast<int16_t>(cosf(phase * 1.15f) * travel * 0.55f);
+
+    clearCubeArea();
+    drawCube(next, sinf(phase) * 7.0f, cosf(phase) * 5.0f);
+    delay(28);
   }
 
-  dieX = homeX;
-  dieY = homeY;
-  drawDieFace(to);
+  cubeX = homeX;
+  cubeY = homeY;
+  drawScene();
 }
 
 void rollDice(const char *reason) {
@@ -159,6 +251,7 @@ void rollDice(const char *reason) {
   const uint8_t result = static_cast<uint8_t>(random(1, 7));
   animateDice(result);
   lastDice = result;
+  drawScene();
   drawResult(lastDice);
   Serial.printf("D6 roll (%s): %u\n", reason, static_cast<unsigned>(lastDice));
 }
@@ -189,20 +282,18 @@ void updateMotion() {
     return;
   }
 
-  // Gentle physical movement while the device is tilted.
-  const int16_t targetX = kDieHomeX - static_cast<int16_t>(constrain(ay * 10.0f, -16.0f, 16.0f));
-  const int16_t targetY = kDieHomeY + static_cast<int16_t>(constrain(ax * 10.0f, -16.0f, 16.0f));
+  if (menuOpen) return;
 
-  if (abs(targetX - dieX) > 1 || abs(targetY - dieY) > 1) {
-    dieX += (targetX - dieX) / 3;
-    dieY += (targetY - dieY) / 3;
+  // Tilt controls the cube's position, with strong damping.
+  const int16_t targetX = kCubeHomeX -
+      static_cast<int16_t>(constrain(ay * 15.0f, -22.0f, 22.0f));
+  const int16_t targetY = kCubeHomeY +
+      static_cast<int16_t>(constrain(ax * 15.0f, -18.0f, 18.0f));
 
-    if (!menuOpen) {
-      gfx->fillScreen(RGB565_BLACK);
-      drawStaticScreen();
-      drawDieBase();
-      drawDiePips(lastDice, kPipColor);
-    }
+  if (abs(targetX - cubeX) > 1 || abs(targetY - cubeY) > 1) {
+    cubeX += (targetX - cubeX) / 4;
+    cubeY += (targetY - cubeY) / 4;
+    drawScene();
   }
 }
 
@@ -225,9 +316,10 @@ void processTouch() {
           Serial.println("Swipe down: menu opened");
         } else if (menuOpen && totalUp >= kSwipeThreshold) {
           menuOpen = false;
-          dieX = kDieHomeX;
-          dieY = kDieHomeY;
-          drawDieFace(lastDice);
+          cubeX = kCubeHomeX;
+          cubeY = kCubeHomeY;
+          drawStaticScreen();
+          drawScene();
           Serial.println("Swipe up: menu closed");
         }
       }
@@ -250,9 +342,11 @@ void processTouch() {
 
     Serial.printf("Touch start: X=%d Y=%d\n", x, y);
 
+    // A touch on the visible front face rolls the die.
+    const int16_t frontY = cubeY + kCubeDepth;
     if (!menuOpen &&
-        x >= dieX && x <= dieX + kDieSize &&
-        y >= dieY && y <= dieY + kDieSize) {
+        x >= cubeX && x <= cubeX + kCubeW + kCubeDepth &&
+        y >= frontY && y <= frontY + kCubeH) {
       trackingSwipe = false;
       rollDice("touch");
     }
@@ -263,8 +357,6 @@ void processTouch() {
 
   if (y < swipeMinY) swipeMinY = y;
   if (y > swipeMaxY) swipeMaxY = y;
-
-  if (menuOpen) return;
 }
 
 }  // namespace
@@ -274,7 +366,7 @@ void setup() {
   delay(1000);
 
   Serial.println();
-  Serial.println("=== Round Dice motion dice test ===");
+  Serial.println("=== Round Dice 3D motion test ===");
   Serial.println("Waveshare ESP32-S3-Touch-AMOLED-1.75");
 
   Wire.begin(IIC_SDA, IIC_SCL);
@@ -285,7 +377,7 @@ void setup() {
     while (true) delay(1000);
   }
 
-  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillScreen(kBackground);
   gfx->setBrightness(180);
 
   Serial.println("Initializing CST9217 touch...");
@@ -313,13 +405,13 @@ void setup() {
   qmi.enableAccelerometer();
 
   randomSeed(static_cast<unsigned long>(micros()));
-  drawDieFace(lastDice);
+  drawStaticScreen();
+  drawScene();
 
   Serial.printf("Touch controller: %s\n", touch.getModelName());
   Serial.println("QMI8658 motion control ready.");
   Serial.println("Touch the die or shake the device to roll.");
 }
-
 void loop() {
   const uint32_t now = millis();
 
