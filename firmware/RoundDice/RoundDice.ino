@@ -295,22 +295,7 @@ void drawMenu(){
   drawTextAt("MENU",190,30,3,WHITE);drawTextAt("Einstellungen",105,88,2,WHITE);drawTextAt("Spiele",170,138,2,WHITE);
   drawTextAt("Soundboard",150,188,2,WHITE);drawTextAt("Info",198,238,2,WHITE);drawTextAt("Nach oben wischen = schliessen",90,268,1,0x29A7);
 }
-void animateDice(uint8_t to){
-  float ox=rotX,oy=rotY,oz=rotZ;
-  for(int i=0;i<36;i++){
-    float t=(float)i/35.0f,ease=1.0f-(1.0f-t)*(1.0f-t);
-    rotX=ox+sinf(t*PI*2)*.55f*(1-t);rotY=oy+ease*PI*5;rotZ=oz+sinf(t*PI*3)*.45f*(1-t);
-    lastDice=(i==35)?to:(uint8_t)random(1,7);draw3DTestCube();delay(20);
-  }
-  lastDice=to;
-  switch(to){case 1:rotX=0;rotY=0;break;case 2:rotX=0;rotY=PI;break;case 3:rotX=PI*.5f;rotY=0;break;
-    case 4:rotX=-PI*.5f;rotY=0;break;case 5:rotX=0;rotY=-PI*.5f;break;default:rotX=0;rotY=PI*.5f;break;}
-  rotZ=0;draw3DTestCube();drawResult();
-}
-void rollDice(const char*reason){
-  uint32_t now=millis();if(now-lastRollMs<kRollCooldownMs)return;lastRollMs=now;
-  uint8_t result=(uint8_t)random(1,7);animateDice(result);Serial.printf("D6 roll (%s): %u\n",reason,(unsigned)result);
-}
+
 void updateMotion(){
   float ax,ay,az;if(!qmi.getAccelerometer(ax,ay,az))return;
   if(!imuReady){lastAccelX=ax;lastAccelY=ay;lastAccelZ=az;imuReady=true;return;}
