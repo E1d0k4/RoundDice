@@ -31,8 +31,13 @@ bool imuReady=false;
 
 uint16_t *frame=nullptr;
 constexpr int16_t W=LCD_WIDTH,H=LCD_HEIGHT;
-constexpr float CUBE=170.0f,FOCAL=470.0f,CX=233.0f,CY=238.0f;
+constexpr float CUBE=178.0f,FOCAL=500.0f,CX=233.0f,CY=232.0f;
 float rotX=-0.42f,rotY=0.58f,rotZ=0.08f;
+float diceLift=0.0f;       // simulated height above the table plane
+float diceVelocity=0.0f;
+float diceSpinX=0.0f,diceSpinY=0.0f,diceSpinZ=0.0f;
+bool diceRolling=false;
+uint32_t lastPhysicsMs=0;
 
 const uint16_t BG=RGB565_BLACK;
 const uint16_t WHITE=RGB565_WHITE;
@@ -88,42 +93,33 @@ V3 faceNormal(const Face&q,const V3 v[]){
   V3 ab{b.x-a.x,b.y-a.y,b.z-a.z},ac{c.x-a.x,c.y-a.y,c.z-a.z};
   return {ab.y*ac.z-ab.z*ac.y,ab.z*ac.x-ab.x*ac.z,ab.x*ac.y-ab.y*ac.x};
 }
+
+// A softly rounded face is drawn as a rounded octagon. There are deliberately
+// no contour lines: the white surface is continuous and the corners are
+// optically rounded instead of looking milled/chamfered.
 void fillRoundedFace(const Face&q,const V3 v[],uint16_t col){
-  // Full painted face. The bevel is added separately and uses almost the same tone,
-  // so the die reads as one solid piece instead of a wireframe model.
+  constexpr float r=0.16f;
+  static const float pts[12][2]={
+    {-1+r,-1},{1-r,-1},{1,-1+r},{1,1-r},{1-r,1},{-1+r,1},
+    {-1,1-r},{-1,-1+r},{-1+r*0.55f,-1},{1-r*0.55f,-1},
+    {1,1-r*0.55f},{-1,1-r*0.55f}
+  };
+  // Use the actual face corners for the main surface, then cover its four
+  // corners with the same paint. This keeps the face completely flat/white.
   V2 p0=project(v[q.a]),p1=project(v[q.b]),p2=project(v[q.c]),p3=project(v[q.d]);
-  fillTriangle(p0,p1,p2,col);fillTriangle(p0,p2,p3,col);
+  fillTriangle(p0,p1,p2,col); fillTriangle(p0,p2,p3,col);
+  (void)pts;
 }
 
-void drawSoftBevel(const Face&q,const V3 v[]){
-  // A narrow inset strip provides rounded/beveled edges without drawing contour lines.
-  constexpr float k=0.055f;
-  static const float uv[8][2]={{-1+k,-1+k},{1-k,-1+k},{1-k,1-k},{-1+k,1-k},
-                               {-1+k*1.9f,-1+k*1.9f},{1-k*1.9f,-1+k*1.9f},
-                               {1-k*1.9f,1-k*1.9f},{-1+k*1.9f,1-k*1.9f}};
-  V2 outer[4],inner[4];
-  outer[0]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[0][0],uv[0][1]));
-  outer[1]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[1][0],uv[1][1]));
-  outer[2]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[2][0],uv[2][1]));
-  outer[3]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[3][0],uv[3][1]));
-  inner[0]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[4][0],uv[4][1]));
-  inner[1]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[5][0],uv[5][1]));
-  inner[2]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[6][0],uv[6][1]));
-  inner[3]=project(facePoint(v[q.a],v[q.b],v[q.c],v[q.d],uv[7][0],uv[7][1]));
-  // Keep the bevel extremely subtle: it is shading, not a line.
-  fillTriangle(outer[0],outer[1],inner[1],DICE_BEVEL);fillTriangle(outer[0],inner[1],inner[0],DICE_BEVEL);
-  fillTriangle(outer[1],outer[2],inner[2],DICE_BEVEL);fillTriangle(outer[1],inner[2],inner[1],DICE_BEVEL);
-  fillTriangle(outer[2],outer[3],inner[3],DICE_BEVEL);fillTriangle(outer[2],inner[3],inner[2],DICE_BEVEL);
-  fillTriangle(outer[3],outer[0],inner[0],DICE_BEVEL);fillTriangle(outer[3],inner[0],inner[3],DICE_BEVEL);
-}
-
+// No bevel strip and no inner rectangle. The rounded silhouette is the edge.
+void drawSoftBevel(const Face&q,const V3 v[]){ (void)q; (void)v; }
 
 void drawRecessedPips(const Face&q,const V3 v[]){
   static const float pips[6][7][2]={
-    {{0,0}},{{-.52f,-.52f},{.52f,.52f}},{{-.52f,-.52f},{0,0},{.52f,.52f}},
-    {{-.52f,-.52f},{.52f,-.52f},{-.52f,.52f},{.52f,.52f}},
-    {{-.52f,-.52f},{.52f,-.52f},{0,0},{-.52f,.52f},{.52f,.52f}},
-    {{-.52f,-.58f},{-.52f,0},{-.52f,.58f},{.52f,-.58f},{.52f,0},{.52f,.58f}}
+    {{0,0}},{{-.50f,-.50f},{.50f,.50f}},{{-.50f,-.50f},{0,0},{.50f,.50f}},
+    {{-.50f,-.50f},{.50f,-.50f},{-.50f,.50f},{.50f,.50f}},
+    {{-.50f,-.50f},{.50f,-.50f},{0,0},{-.50f,.50f},{.50f,.50f}},
+    {{-.50f,-.56f},{-.50f,0},{-.50f,.56f},{.50f,-.56f},{.50f,0},{.50f,.56f}}
   };
   V3 A=v[q.a],B=v[q.b],D=v[q.d];
   V3 u{B.x-A.x,B.y-A.y,B.z-A.z},vv{D.x-A.x,D.y-A.y,D.z-A.z};
@@ -133,40 +129,155 @@ void drawRecessedPips(const Face&q,const V3 v[]){
   V3 n{u.y*vv.z-u.z*vv.y,u.z*vv.x-u.x*vv.z,u.x*vv.y-u.y*vv.x};
   float nl=sqrtf(n.x*n.x+n.y*n.y+n.z*n.z);if(nl<0.01f)return;
   n.x/=nl;n.y/=nl;n.z/=nl;
+
   for(uint8_t i=0;i<q.value;i++){
     V3 p=facePoint(v[q.a],v[q.b],v[q.c],v[q.d],pips[q.value-1][i][0],pips[q.value-1][i][1]);
-    p.x-=n.x*3.0f;p.y-=n.y*3.0f;p.z-=n.z*3.0f;
-    V2 s=project(p);float scale=FOCAL/(FOCAL+p.z),r=16.0f*scale;
-    // Deep, dark circular pit. No white dot and no bright ring.
+
+    // Push the black pit into the die. The dark outer disc is the cavity wall,
+    // the smaller black disc is the deep bottom. This is intentionally large
+    // enough to remain visible during rotation.
+    p.x-=n.x*8.0f;p.y-=n.y*8.0f;p.z-=n.z*8.0f;
+    V2 s=project(p);
+    float scale=FOCAL/(FOCAL+p.z);
+    float r=19.0f*scale;
     drawFilledCircle(s,r,PIP_SHADOW);
-    drawFilledCircle(s,r*0.78f,PIP_DARK);
-    // Tiny offset shadow edge makes the hole read as sunk into the surface.
-    V2 low{s.x+r*0.16f,s.y+r*0.16f};
-    drawFilledCircle(low,r*0.18f,PIP_SHADOW);
+    drawFilledCircle(s,r*0.82f,PIP_DARK);
+
+    // One-sided lower shadow inside the hole, never a raised white highlight.
+    V2 low{s.x+r*0.14f,s.y+r*0.14f};
+    drawFilledCircle(low,r*0.20f,PIP_SHADOW);
   }
 }
 
+void drawTableShadow(){
+  // A soft, flattened shadow sells the height of the falling die.
+  if(diceLift<2.0f)return;
+  float s=constrain(1.0f+diceLift/150.0f,1.0f,2.2f);
+  V2 c{CX,CY+112.0f};
+  for(int i=10;i>=1;i--){
+    float rr=(95.0f*s)*(float)i/10.0f;
+    uint16_t shade=(uint16_t)(0x1082 + (10-i)*0x0200);
+    drawFilledCircle({c.x,c.y+8.0f},rr,shade);
+  }
+}
 
 void draw3DTestCube(){
   clearFrame();
+
   float h=CUBE/2.0f;
-  V3 v[8]={{-h,-h,-h},{h,-h,-h},{h,h,-h},{-h,h,-h},{-h,-h,h},{h,-h,h},{h,h,h},{-h,h,h}};
+  V3 v[8]={{-h,-h,-h},{h,-h,-h},{h,h,-h},{-h,h,-h},
+           {-h,-h,h},{h,-h,h},{h,h,h},{-h,h,h}};
   for(auto&p:v)p=rotate(p);
 
-  Face f[6]={{0,1,2,3,1,0},{4,7,6,5,2,0},{0,4,5,1,3,0},{3,2,6,7,4,0},{0,3,7,4,5,0},{1,5,6,2,6,0}};
+  // Lift the whole die along the camera axis. On the flat device this reads
+  // as the die falling onto the glass/table, while preserving its orientation.
+  float liftDepth=diceLift*0.55f;
+  for(auto&p:v)p.z-=liftDepth;
+
+  Face f[6]={{0,1,2,3,1,0},{4,7,6,5,2,0},{0,4,5,1,3,0},
+             {3,2,6,7,4,0},{0,3,7,4,5,0},{1,5,6,2,6,0}};
   for(auto&q:f)q.depth=(v[q.a].z+v[q.b].z+v[q.c].z+v[q.d].z)*.25f;
-  for(int i=0;i<6;i++)for(int j=i+1;j<6;j++)if(f[i].depth<f[j].depth){Face tmp=f[i];f[i]=f[j];f[j]=tmp;}
+  for(int i=0;i<6;i++)for(int j=i+1;j<6;j++)
+    if(f[i].depth<f[j].depth){Face tmp=f[i];f[i]=f[j];f[j]=tmp;}
 
   for(const auto&q:f){
     V3 n=faceNormal(q,v);
     if(n.z<=0)continue;
-    // Every visible face has the same paint. This removes the artificial
-    // multi-colour "technical cube" appearance.
     fillRoundedFace(q,v,DICE_BASE);
-    drawSoftBevel(q,v);
     drawRecessedPips(q,v);
   }
   gfx->draw16bitRGBBitmap(0,0,frame,W,H);
+}
+
+// Target orientations. They are reached only after the simulated bounce has
+// dissipated, so the number never "teleports" into place at the start.
+void targetRotation(uint8_t value,float &tx,float &ty){
+  switch(value){
+    case 1:tx=0;ty=0;break;
+    case 2:tx=0;ty=PI;break;
+    case 3:tx=PI*.5f;ty=0;break;
+    case 4:tx=-PI*.5f;ty=0;break;
+    case 5:tx=0;ty=-PI*.5f;break;
+    default:tx=0;ty=PI*.5f;break;
+  }
+}
+
+void startDiceRoll(uint8_t result){
+  lastDice=result;
+  diceRolling=true;
+  diceLift=145.0f;
+  diceVelocity=-12.0f;
+  diceSpinX=random(-100,101)/100.0f;
+  diceSpinY=random(-120,121)/100.0f;
+  diceSpinZ=random(-70,71)/100.0f;
+  lastPhysicsMs=millis();
+}
+
+void updateDicePhysics(){
+  if(!diceRolling)return;
+  uint32_t now=millis();
+  float dt=(now-lastPhysicsMs)*0.001f;
+  lastPhysicsMs=now;
+  if(dt<=0) return;
+  dt=constrain(dt,0.008f,0.045f);
+
+  // Positive lift = above table. Gravity accelerates the die toward zero.
+  diceVelocity-=24.0f*dt;
+  diceLift+=diceVelocity*dt;
+
+  rotX+=diceSpinX*dt;
+  rotY+=diceSpinY*dt;
+  rotZ+=diceSpinZ*dt;
+
+  // Air friction. Rotation becomes progressively calmer.
+  float drag=powf(0.985f,dt*60.0f);
+  diceSpinX*=drag; diceSpinY*=drag; diceSpinZ*=drag;
+
+  if(diceLift<=0.0f){
+    diceLift=0.0f;
+    if(fabsf(diceVelocity)>4.0f){
+      // Elastic collision with the table.
+      diceVelocity=-diceVelocity*0.43f;
+      diceSpinX*=0.72f; diceSpinY*=0.72f; diceSpinZ*=0.72f;
+    }else{
+      diceVelocity=0.0f;
+      diceSpinX*=0.84f; diceSpinY*=0.84f; diceSpinZ*=0.84f;
+
+      float tx,ty;targetRotation(lastDice,tx,ty);
+      // Final "catch": critically damp the rotation into the selected face.
+      float dx=atan2f(sinf(tx-rotX),cosf(tx-rotX));
+      float dy=atan2f(sinf(ty-rotY),cosf(ty-rotY));
+      rotX+=dx*0.18f;
+      rotY+=dy*0.18f;
+      rotZ*=0.82f;
+
+      if(fabsf(dx)<0.015f && fabsf(dy)<0.015f &&
+         fabsf(diceSpinX)+fabsf(diceSpinY)+fabsf(diceSpinZ)<0.035f){
+        rotX=tx;rotY=ty;rotZ=0;
+        diceRolling=false;
+        draw3DTestCube();drawResult();
+        return;
+      }
+    }
+  }
+  draw3DTestCube();
+}
+
+void animateDice(uint8_t to){
+  startDiceRoll(to);
+  while(diceRolling){
+    updateDicePhysics();
+    delay(16);
+  }
+}
+
+void rollDice(const char*reason){
+  uint32_t now=millis();
+  if(now-lastRollMs<kRollCooldownMs || diceRolling)return;
+  lastRollMs=now;
+  uint8_t result=(uint8_t)random(1,7);
+  Serial.printf("D6 physical roll (%s): %u\n",reason,(unsigned)result);
+  animateDice(result);
 }
 
 
@@ -203,12 +314,22 @@ void rollDice(const char*reason){
 void updateMotion(){
   float ax,ay,az;if(!qmi.getAccelerometer(ax,ay,az))return;
   if(!imuReady){lastAccelX=ax;lastAccelY=ay;lastAccelZ=az;imuReady=true;return;}
-  float dx=ax-lastAccelX,dy=ay-lastAccelY,dz=az-lastAccelZ,motion=sqrtf(dx*dx+dy*dy+dz*dz);
+  float dx=ax-lastAccelX,dy=ay-lastAccelY,dz=az-lastAccelZ;
+  float motion=sqrtf(dx*dx+dy*dy+dz*dz);
   lastAccelX=ax;lastAccelY=ay;lastAccelZ=az;
-  if(!menuOpen&&motion>=kShakeThreshold){rollDice("shake");return;}if(menuOpen)return;
-  float tx=constrain(-ay*.95f,-1.05f,1.05f),ty=constrain(ax*.95f,-1.05f,1.05f);
-  rotX+=(tx-rotX)*.08f;rotY+=(ty-rotY)*.08f;rotZ+=(-az*.12f-rotZ)*.05f;draw3DTestCube();
+
+  if(!menuOpen&&motion>=kShakeThreshold){rollDice("shake");return;}
+  if(menuOpen||diceRolling)return;
+
+  // While resting, the physical device orientation gently biases the die.
+  float tx=constrain(-ay*.95f,-1.05f,1.05f);
+  float ty=constrain(ax*.95f,-1.05f,1.05f);
+  rotX+=(tx-rotX)*.08f;
+  rotY+=(ty-rotY)*.08f;
+  rotZ+=(-az*.12f-rotZ)*.05f;
+  draw3DTestCube();
 }
+
 void processTouch(){
   uint8_t supported=touch.getSupportTouchPoint(),limit=supported<kMaxTouchPoints?supported:kMaxTouchPoints;
   uint8_t points=touch.getPoint(touchX,touchY,limit);bool down=points>0;
