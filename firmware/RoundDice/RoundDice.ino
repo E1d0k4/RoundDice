@@ -22,7 +22,7 @@ int16_t touchX[kMaxTouchPoints]={},touchY[kMaxTouchPoints]={}; uint32_t lastTouc
 uint8_t lastDice=6; bool menuOpen=false,touchWasDown=false,trackingSwipe=false; int16_t swipeStartY=0,swipeMinY=0,swipeMaxY=0;
 float lastAccelX=0,lastAccelY=0,lastAccelZ=1; bool imuReady=false; uint16_t *frame=nullptr;
 constexpr int16_t W=LCD_WIDTH,H=LCD_HEIGHT; constexpr float CUBE=178.0f,FOCAL=500.0f,CX=233.0f,CY=232.0f;
-float rotX=-0.42f,rotY=0.58f,rotZ=0.08f; float diceLift=0.0f,diceVelocity=0.0f,diceSpinX=0.0f,diceSpinY=0.0f,diceSpinZ=0.0f; bool diceRolling=false; uint32_t lastPhysicsMs=0;
+float rotX=-0.42f,rotY=0.58f,rotZ=0.08f; float diceLift=0.0f,diceVelocity=0.0f,diceSpinX=0.0f,diceSpinY=0.0f,diceSpinZ=0.0f; uint8_t diceBounces=0; bool diceRolling=false; uint32_t lastPhysicsMs=0;
 const uint16_t BG=RGB565_BLACK,WHITE=RGB565_WHITE,DICE_BASE=RGB565_WHITE,DICE_BEVEL=RGB565_WHITE,PIP_DARK=RGB565_BLACK,PIP_SHADOW=0x0861;
 struct V2{float x,y;}; struct V3{float x,y,z;}; struct Face{uint8_t a,b,c,d,value;float depth;};
 inline void px(int x,int y,uint16_t c){if((unsigned)x<W&&(unsigned)y<H)frame[y*W+x]=c;} void clearFrame(){memset(frame,0,W*H*sizeof(uint16_t));}
@@ -37,22 +37,33 @@ void drawSoftBevel(const Face&q,const V3 v[]){(void)q;(void)v;}
 void drawRecessedPip(V3 center,V3 u,V3 vv,V3 n,float radius){constexpr int SEG=20,RINGS=5;const uint16_t shade[RINGS]={0x3186,0x20E4,0x18C3,0x1062,RGB565_BLACK};for(int r=0;r<RINGS-1;r++){float t=(float)r/(RINGS-1),rr=radius*(1-.76f*t),depth=7*t,t2=(float)(r+1)/(RINGS-1),rr2=radius*(1-.76f*t2),depth2=7*t2;V3 ringA[SEG],ringB[SEG];for(int i=0;i<SEG;i++){float a=2*PI*i/SEG,ca=cosf(a),sa=sinf(a);ringA[i]={center.x+u.x*(ca*rr)+vv.x*(sa*rr)-n.x*depth,center.y+u.y*(ca*rr)+vv.y*(sa*rr)-n.y*depth,center.z+u.z*(ca*rr)+vv.z*(sa*rr)-n.z*depth};ringB[i]={center.x+u.x*(ca*rr2)+vv.x*(sa*rr2)-n.x*depth2,center.y+u.y*(ca*rr2)+vv.y*(sa*rr2)-n.y*depth2,center.z+u.z*(ca*rr2)+vv.z*(sa*rr2)-n.z*depth2};}for(int i=0;i<SEG;i++){int j=(i+1)%SEG;fillTriangle(project(ringA[i]),project(ringA[j]),project(ringB[j]),shade[r]);fillTriangle(project(ringA[i]),project(ringB[j]),project(ringB[i]),shade[r]);}}V3 bottom{center.x-n.x*7,center.y-n.y*7,center.z-n.z*7};float scale=FOCAL/(FOCAL+bottom.z);drawFilledCircle(project(bottom),radius*.24f*scale,RGB565_BLACK);}
 void drawRecessedPips(const Face&q,const V3 v[]){static const float pips[6][7][2]={{{0,0}},{{-.50f,-.50f},{.50f,.50f}},{{-.50f,-.50f},{0,0},{.50f,.50f}},{{-.50f,-.50f},{.50f,-.50f},{-.50f,.50f},{.50f,.50f}},{{-.50f,-.50f},{.50f,-.50f},{0,0},{-.50f,.50f},{.50f,.50f}},{{-.50f,-.56f},{-.50f,0},{-.50f,.56f},{.50f,-.56f},{.50f,0},{.50f,.56f}}};V3 A=v[q.a],B=v[q.b],D=v[q.d],u{B.x-A.x,B.y-A.y,B.z-A.z},vv{D.x-A.x,D.y-A.y,D.z-A.z};float ul=sqrtf(u.x*u.x+u.y*u.y+u.z*u.z),vl=sqrtf(vv.x*vv.x+vv.y*vv.y+vv.z*vv.z);if(ul<1||vl<1)return;u.x/=ul;u.y/=ul;u.z/=ul;vv.x/=vl;vv.y/=vl;vv.z/=vl;V3 n{u.y*vv.z-u.z*vv.y,u.z*vv.x-u.x*vv.z,u.x*vv.y-u.y*vv.x};float nl=sqrtf(n.x*n.x+n.y*n.y+n.z*n.z);if(nl<.01f)return;n.x/=nl;n.y/=nl;n.z/=nl;for(uint8_t i=0;i<q.value;i++){V3 p=facePoint(v[q.a],v[q.b],v[q.c],v[q.d],pips[q.value-1][i][0],pips[q.value-1][i][1]);drawRecessedPip(p,u,vv,n,20);}}
 void drawTableShadow(){if(diceLift<2)return;float s=constrain(1+diceLift/150,1,2.2f);V2 c{CX,CY+112};for(int i=10;i>=1;i--){float rr=(95*s)*i/10;uint16_t shade=(uint16_t)(0x1082+(10-i)*0x0200);drawFilledCircle({c.x,c.y+8},rr,shade);}}
-void draw3DTestCube(){clearFrame();float h=CUBE/2;V3 v[8]={{-h,-h,-h},{h,-h,-h},{h,h,-h},{-h,h,-h},{-h,-h,h},{h,-h,h},{h,h,h},{-h,h,h}};for(auto&p:v)p=rotate(p);float liftDepth=diceLift*.55f;for(auto&p:v)p.z-=liftDepth;Face f[6]={{0,1,2,3,1,0},{4,7,6,5,2,0},{0,4,5,1,3,0},{3,2,6,7,4,0},{0,3,7,4,5,0},{1,5,6,2,6,0}};for(auto&q:f)q.depth=(v[q.a].z+v[q.b].z+v[q.c].z+v[q.d].z)*.25f;for(int i=0;i<6;i++)for(int j=i+1;j<6;j++)if(f[i].depth<f[j].depth){Face tmp=f[i];f[i]=f[j];f[j]=tmp;}for(const auto&q:f){V3 n=faceNormal(q,v);if(n.z<=0)continue;fillRoundedFace(q,v,DICE_BASE);drawRecessedPips(q,v);}gfx->draw16bitRGBBitmap(0,0,frame,W,H);}
+void draw3DTestCube(){clearFrame();drawTableShadow();float h=CUBE/2;V3 v[8]={{-h,-h,-h},{h,-h,-h},{h,h,-h},{-h,h,-h},{-h,-h,h},{h,-h,h},{h,h,h},{-h,h,h}};for(auto&p:v)p=rotate(p);for(auto&p:v)p.y-=diceLift;Face f[6]={{0,1,2,3,1,0},{4,7,6,5,2,0},{0,4,5,1,3,0},{3,2,6,7,4,0},{0,3,7,4,5,0},{1,5,6,2,6,0}};for(auto&q:f)q.depth=(v[q.a].z+v[q.b].z+v[q.c].z+v[q.d].z)*.25f;for(int i=0;i<6;i++)for(int j=i+1;j<6;j++)if(f[i].depth<f[j].depth){Face tmp=f[i];f[i]=f[j];f[j]=tmp;}for(const auto&q:f){V3 n=faceNormal(q,v);if(n.z<=0)continue;fillRoundedFace(q,v,DICE_BASE);drawRecessedPips(q,v);}gfx->draw16bitRGBBitmap(0,0,frame,W,H);}
 void targetRotation(uint8_t value,float &tx,float &ty){switch(value){case 1:tx=0;ty=0;break;case 2:tx=0;ty=PI;break;case 3:tx=PI*.5f;ty=0;break;case 4:tx=-PI*.5f;ty=0;break;case 5:tx=0;ty=-PI*.5f;break;default:tx=0;ty=PI*.5f;break;}}
-void startDiceRoll(uint8_t result){lastDice=result;diceRolling=true;diceLift=118.0f;diceVelocity=-18.0f;diceSpinX=random(-150,151)/100.0f;diceSpinY=random(-180,181)/100.0f;diceSpinZ=random(-110,111)/100.0f;lastPhysicsMs=millis();}
+void startDiceRoll(uint8_t result){lastDice=result;diceRolling=true;diceBounces=0;diceLift=155.0f;diceVelocity=0.0f;diceSpinX=random(-260,261)/100.0f;diceSpinY=random(-300,301)/100.0f;diceSpinZ=random(-180,181)/100.0f;lastPhysicsMs=millis();}
 void drawResult();
-void updateDicePhysics(){if(!diceRolling)return;uint32_t now=millis();float dt=(now-lastPhysicsMs)*.001f;lastPhysicsMs=now;if(dt<=0)return;dt=constrain(dt,.008f,.024f);
-  // Gravity is continuous; the die starts higher and accelerates strongly. The initial upward/downward velocity is small so the first part visibly accelerates instead of looking like a scripted slide.
-  diceVelocity-=1850.0f*dt; diceLift+=diceVelocity*dt;
+void updateDicePhysics(){if(!diceRolling)return;uint32_t now=millis();float dt=(now-lastPhysicsMs)*.001f;lastPhysicsMs=now;if(dt<=0)return;dt=constrain(dt,.010f,.022f);
+  diceVelocity-=700.0f*dt;
+  diceLift+=diceVelocity*dt;
   rotX+=diceSpinX*dt;rotY+=diceSpinY*dt;rotZ+=diceSpinZ*dt;
-  float drag=powf(.955f,dt*60);diceSpinX*=drag;diceSpinY*=drag;diceSpinZ*=drag;
-  if(diceLift<=0){diceLift=0;
-    if(fabsf(diceVelocity)>14){diceVelocity=-diceVelocity*.22f;diceSpinX*=.56f;diceSpinY*=.56f;diceSpinZ*=.56f;
-      // A small upward rebound plus gravity produces a distinct but short second contact.
-      diceLift=.6f;
-    }else{diceVelocity=0;diceSpinX*=.55f;diceSpinY*=.55f;diceSpinZ*=.55f;float tx,ty;targetRotation(lastDice,tx,ty);float dx=atan2f(sinf(tx-rotX),cosf(tx-rotX)),dy=atan2f(sinf(ty-rotY),cosf(ty-rotY));rotX+=dx*.26f;rotY+=dy*.26f;rotZ*=.58f;if(fabsf(dx)<.015f&&fabsf(dy)<.015f&&fabsf(diceSpinX)+fabsf(diceSpinY)+fabsf(diceSpinZ)<.035f){rotX=tx;rotY=ty;rotZ=0;diceRolling=false;draw3DTestCube();drawResult();return;}}}
+  float drag=powf(.965f,dt*60);diceSpinX*=drag;diceSpinY*=drag;diceSpinZ*=drag;
+  if(diceLift<=0.0f){
+    diceLift=0.0f;
+    float impact=fabsf(diceVelocity);
+    if(diceBounces<2 && impact>20.0f){
+      diceBounces++;
+      diceVelocity=impact*(diceBounces==1?0.30f:0.16f);
+      diceSpinX*=diceBounces==1?.52f:.34f;diceSpinY*=diceBounces==1?.52f:.34f;diceSpinZ*=diceBounces==1?.48f:.30f;
+    }else{
+      diceVelocity=0.0f;
+      diceSpinX*=.72f;diceSpinY*=.72f;diceSpinZ*=.65f;
+      float tx,ty;targetRotation(lastDice,tx,ty);
+      float dx=atan2f(sinf(tx-rotX),cosf(tx-rotX)),dy=atan2f(sinf(ty-rotY),cosf(ty-rotY));
+      rotX+=dx*.38f;rotY+=dy*.38f;rotZ*=.42f;
+      if(fabsf(dx)<.012f&&fabsf(dy)<.012f&&fabsf(diceSpinX)+fabsf(diceSpinY)+fabsf(diceSpinZ)<.028f){rotX=tx;rotY=ty;rotZ=0;diceRolling=false;draw3DTestCube();drawResult();return;}
+    }
+  }
   draw3DTestCube();}
-void animateDice(uint8_t to){startDiceRoll(to);while(diceRolling){updateDicePhysics();delay(16);}}
+void animateDice(uint8_t to){startDiceRoll(to);while(diceRolling){updateDicePhysics();delay(10);}}
 void rollDice(const char*reason){uint32_t now=millis();if(now-lastRollMs<kRollCooldownMs||diceRolling)return;lastRollMs=now;uint8_t result=(uint8_t)random(1,7);Serial.printf("D6 physical roll (%s): %u\n",reason,(unsigned)result);animateDice(result);}
 void drawTextAt(const char*text,int16_t x,int16_t y,uint8_t size,uint16_t color){gfx->setTextSize(size);gfx->setTextColor(color);gfx->setCursor(x,y);gfx->print(text);}
 void drawStaticScreen(){gfx->fillScreen(BG);drawTextAt("ROUND DICE",145,25,3,WHITE);drawTextAt("3D HARDWARE TEST",142,62,2,0x29A7);drawTextAt("TOUCH  •  SHAKE  •  TILT",130,447,1,0x29A7);char r[16];snprintf(r,sizeof(r),"D6  %u",(unsigned)lastDice);drawTextAt(r,210,425,2,RGB565_YELLOW);}
