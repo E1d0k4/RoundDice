@@ -115,43 +115,38 @@ void fillRoundedFace(const Face&q,const V3 v[],uint16_t col){
 void drawSoftBevel(const Face&q,const V3 v[]){ (void)q; (void)v; }
 
 void drawRecessedPip(V3 center,V3 u,V3 vv,V3 n,float radius){
-  // A real concave-looking pip: the rim stays at the die surface while
-  // successive rings move inward along the face normal. The center is behind
-  // the surface, so it can never look like a raised button.
-  constexpr int SEG=16;
-  constexpr int RINGS=4;
-  const uint16_t shades[RINGS]={0x18E3,0x1082,0x0861,RGB565_BLACK};
-
-  V3 ring[RINGS][SEG];
-  for(int r=0;r<RINGS;r++){
-    float t=(float)r/(float)(RINGS-1);
-    float rr=radius*(1.0f-0.72f*t);
-    float depth=5.5f*t;
-    for(int i=0;i<SEG;i++){
-      float a=2.0f*PI*(float)i/(float)SEG;
-      float ca=cosf(a),sa=sinf(a);
-      ring[r][i]={
-        center.x + u.x*(ca*rr) + vv.x*(sa*rr) - n.x*depth,
-        center.y + u.y*(ca*rr) + vv.y*(sa*rr) - n.y*depth,
-        center.z + u.z*(ca*rr) + vv.z*(sa*rr) - n.z*depth
-      };
-    }
-  }
-
-  // Fill each annulus with slightly different shading. This creates the
-  // optical curvature of a hemispherical cavity without any raised outline.
+  // One pip = one concave bowl. There is no separate black ball/overlay.
+  // The opening is flush with the white face; only the center is deepest.
+  constexpr int SEG=20;
+  constexpr int RINGS=5;
+  const uint16_t shade[RINGS]={0x3186,0x20E4,0x18C3,0x1062,RGB565_BLACK};
   for(int r=0;r<RINGS-1;r++){
+    float t=(float)r/(float)(RINGS-1);
+    float rr=radius*(1.0f-0.76f*t);
+    float depth=7.0f*t;
+    V3 ringA[SEG],ringB[SEG];
+    for(int i=0;i<SEG;i++){
+      float a=2.0f*PI*(float)i/(float)SEG,ca=cosf(a),sa=sinf(a);
+      ringA[i]={center.x+u.x*(ca*rr)+vv.x*(sa*rr)-n.x*depth,
+                center.y+u.y*(ca*rr)+vv.y*(sa*rr)-n.y*depth,
+                center.z+u.z*(ca*rr)+vv.z*(sa*rr)-n.z*depth};
+      float t2=(float)(r+1)/(float)(RINGS-1);
+      float rr2=radius*(1.0f-0.76f*t2),depth2=7.0f*t2;
+      ringB[i]={center.x+u.x*(ca*rr2)+vv.x*(sa*rr2)-n.x*depth2,
+                center.y+u.y*(ca*rr2)+vv.y*(sa*rr2)-n.y*depth2,
+                center.z+u.z*(ca*rr2)+vv.z*(sa*rr2)-n.z*depth2};
+    }
     for(int i=0;i<SEG;i++){
       int j=(i+1)%SEG;
-      fillTriangle(project(ring[r][i]),project(ring[r][j]),project(ring[r+1][j]),shades[r]);
-      fillTriangle(project(ring[r][i]),project(ring[r+1][j]),project(ring[r+1][i]),shades[r]);
+      fillTriangle(project(ringA[i]),project(ringA[j]),project(ringB[j]),shade[r]);
+      fillTriangle(project(ringA[i]),project(ringB[j]),project(ringB[i]),shade[r]);
     }
   }
-  V2 c=project(ring[RINGS-1][0]);
-  float scale=FOCAL/(FOCAL+ring[RINGS-1][0].z);
-  drawFilledCircle(c,radius*0.28f*scale,RGB565_BLACK);
+  // Flat dark bottom, centered correctly in the cavity.
+  V3 bottom{center.x-n.x*7.0f,center.y-n.y*7.0f,center.z-n.z*7.0f};
+  float scale=FOCAL/(FOCAL+bottom.z);
+  drawFilledCircle(project(bottom),radius*0.24f*scale,RGB565_BLACK);
 }
-
 void drawRecessedPips(const Face&q,const V3 v[]){
   static const float pips[6][7][2]={
     {{0,0}},{{-.50f,-.50f},{.50f,.50f}},{{-.50f,-.50f},{0,0},{.50f,.50f}},
@@ -232,8 +227,8 @@ void targetRotation(uint8_t value,float &tx,float &ty){
 void startDiceRoll(uint8_t result){
   lastDice=result;
   diceRolling=true;
-  diceLift=108.0f;
-  diceVelocity=-18.0f;
+  diceLift=62.0f;
+  diceVelocity=-28.0f;
   diceSpinX=random(-100,101)/100.0f;
   diceSpinY=random(-120,121)/100.0f;
   diceSpinZ=random(-70,71)/100.0f;
@@ -248,12 +243,12 @@ void updateDicePhysics(){
   float dt=(now-lastPhysicsMs)*0.001f;
   lastPhysicsMs=now;
   if(dt<=0) return;
-  dt=constrain(dt,0.008f,0.030f);
+  dt=constrain(dt,0.008f,0.024f);
 
   // Positive lift = above table. Gravity accelerates the die toward zero.
   // Fast, snappy gravity: the die should hit the table quickly rather than
   // appearing to float downward.
-  diceVelocity-=620.0f*dt;
+  diceVelocity-=1500.0f*dt;
   diceLift+=diceVelocity*dt;
 
   rotX+=diceSpinX*dt;
@@ -266,10 +261,10 @@ void updateDicePhysics(){
 
   if(diceLift<=0.0f){
     diceLift=0.0f;
-    if(fabsf(diceVelocity)>7.0f){
+    if(fabsf(diceVelocity)>10.0f){
       // Short, firm impact. A low restitution makes the die catch itself
       // quickly instead of repeatedly bouncing high into the air.
-      diceVelocity=-diceVelocity*0.20f;
+      diceVelocity=-diceVelocity*0.10f;
       diceSpinX*=0.48f; diceSpinY*=0.48f; diceSpinZ*=0.48f;
     }else{
       diceVelocity=0.0f;
