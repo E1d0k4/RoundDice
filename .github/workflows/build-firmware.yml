@@ -14,28 +14,34 @@ jobs:
     steps:
       - name: Checkout Round Dice
         uses: actions/checkout@v4
+
       - name: Checkout official Waveshare board package
         uses: actions/checkout@v4
         with:
           repository: waveshareteam/ESP32-S3-Touch-AMOLED-1.75
           ref: v1.0.1
           path: waveshare-board
+
       - name: Setup Arduino CLI
         uses: arduino/setup-arduino-cli@v2
+
       - name: Install Arduino-ESP32 3.3.10
         run: |
           arduino-cli config init --overwrite
           arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli core update-index
           arduino-cli core install esp32:esp32@3.3.10
+
       - name: Prepare official Waveshare libraries
         run: |
           rm -rf firmware/RoundDice/libraries
           cp -R waveshare-board/examples/arduino/libraries firmware/RoundDice/libraries
+
       - name: Compile
         run: |
           arduino-cli compile --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB" --libraries firmware/RoundDice/libraries --export-binaries --output-dir build/arduino firmware/RoundDice
-      - name: Prepare installer files
+
+      - name: Prepare compact Web Installer image
         shell: bash
         run: |
           set -euo pipefail
@@ -43,37 +49,32 @@ jobs:
           PARTITIONS="$(find build/arduino -type f -name 'RoundDice.ino.partitions.bin' | head -n1)"
           FIRMWARE="$(find build/arduino -type f -name 'RoundDice.ino.bin' | head -n1)"
           BOOT_APP0="$(find "$HOME/.arduino15/packages/esp32/hardware/esp32/3.3.10/tools/partitions" -type f -name 'boot_app0.bin' | head -n1)"
+          ESPTOOL="$HOME/.arduino15/packages/esp32/tools/esptool_py/5.3.0/esptool"
+
           test -s "$BOOTLOADER"
           test -s "$PARTITIONS"
           test -s "$FIRMWARE"
           test -s "$BOOT_APP0"
-          cp "$BOOTLOADER" build/round-dice-bootloader.bin
-          cp "$PARTITIONS" build/round-dice-partitions.bin
-          cp "$FIRMWARE" build/round-dice-firmware.bin
-          cp "$BOOT_APP0" build/round-dice-boot_app0.bin
-          ls -lh build/round-dice-*.bin
-      - name: Verify installer files
-        run: |
-          test -s build/round-dice-bootloader.bin
-          test -s build/round-dice-partitions.bin
-          test -s build/round-dice-firmware.bin
-          test -s build/round-dice-boot_app0.bin
+          test -x "$ESPTOOL"
+
+          "$ESPTOOL" --chip esp32s3 merge-bin             -o build/round-dice-installer.bin             --flash-mode keep             --flash-freq keep             --flash-size keep             0x0 "$BOOTLOADER"             0x8000 "$PARTITIONS"             0xe000 "$BOOT_APP0"             0x10000 "$FIRMWARE"
+
+          test -s build/round-dice-installer.bin
+          ls -lh build/round-dice-installer.bin
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: round-dice-test-firmware
-          path: |
-            build/round-dice-bootloader.bin
-            build/round-dice-partitions.bin
-            build/round-dice-firmware.bin
-            build/round-dice-boot_app0.bin
+          path: build/round-dice-installer.bin
+
       - name: Publish installer firmware
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view test-latest >/dev/null 2>&1; then
-            gh release upload test-latest               build/round-dice-bootloader.bin               build/round-dice-partitions.bin               build/round-dice-firmware.bin               build/round-dice-boot_app0.bin               --clobber
-          else
-            gh release create test-latest               build/round-dice-bootloader.bin               build/round-dice-partitions.bin               build/round-dice-firmware.bin               build/round-dice-boot_app0.bin               --title "Round Dice Test – latest"               --notes "Automatisch erzeugte Test-Firmware für den Web Installer."
-          fi
+          gh release view test-latest >/dev/null 2>&1 || gh release create test-latest --title "Round Dice Test – latest" --notes "Automatisch erzeugte Test-Firmware für den Web Installer."
+          for asset in round-dice-installer.bin round-dice-bootloader.bin round-dice-partitions.bin round-dice-firmware.bin round-dice-boot_app0.bin round-dice-test-merged.bin; do
+            gh release delete-asset test-latest "$asset" --yes >/dev/null 2>&1 || true
+          done
+          gh release upload test-latest build/round-dice-installer.bin --clobber
