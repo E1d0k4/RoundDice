@@ -32,12 +32,8 @@ jobs:
       - name: Download current firmware
         run: |
           set -euo pipefail
-          mkdir -p web
-          curl -fL --retry 3 -o web/bootloader.bin             https://github.com/E1d0k4/RoundDice/releases/download/test-latest/round-dice-bootloader.bin
-          curl -fL --retry 3 -o web/partitions.bin             https://github.com/E1d0k4/RoundDice/releases/download/test-latest/round-dice-partitions.bin
-          curl -fL --retry 3 -o web/boot_app0.bin             https://github.com/E1d0k4/RoundDice/releases/download/test-latest/round-dice-boot_app0.bin
-          curl -fL --retry 3 -o web/firmware.bin             https://github.com/E1d0k4/RoundDice/releases/download/test-latest/round-dice-firmware.bin
-          ls -lh web/*.bin
+          curl -fL --retry 3 -o web/firmware.bin https://github.com/E1d0k4/RoundDice/releases/download/test-latest/round-dice-installer.bin
+          ls -lh web/firmware.bin
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
