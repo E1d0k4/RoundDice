@@ -1,0 +1,65 @@
+name: Build Round Dice firmware
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Round Dice
+        uses: actions/checkout@v4
+      - name: Checkout official Waveshare board package
+        uses: actions/checkout@v4
+        with:
+          repository: waveshareteam/ESP32-S3-Touch-AMOLED-1.75
+          ref: v1.0.1
+          path: waveshare-board
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+      - name: Install Arduino-ESP32 3.3.10
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.10
+      - name: Prepare official Waveshare libraries
+        run: |
+          rm -rf firmware/RoundDice/libraries
+          cp -R waveshare-board/examples/arduino/libraries firmware/RoundDice/libraries
+      - name: Compile
+        run: |
+          arduino-cli compile --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB" --libraries firmware/RoundDice/libraries --export-binaries --output-dir build/arduino firmware/RoundDice
+      - name: Install esptool
+        run: python3 -m pip install --upgrade esptool
+      - name: Merge flash image
+        shell: bash
+        run: |
+          set -euo pipefail
+          BOOTLOADER="$(find build/arduino -type f -name 'bootloader.bin' | head -n1)"
+          PARTITIONS="$(find build/arduino -type f -name 'partitions.bin' | head -n1)"
+          FIRMWARE="$(find build/arduino -type f -name 'RoundDice.ino.bin' | head -n1)"
+          test -n "$BOOTLOADER"
+          test -n "$PARTITIONS"
+          test -n "$FIRMWARE"
+          python3 -m esptool --chip esp32s3 merge-bin -o build/round-dice-test-merged.bin --flash-size 16MB 0x0 "$BOOTLOADER" 0x8000 "$PARTITIONS" 0x10000 "$FIRMWARE"
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: round-dice-test-firmware
+          path: build/round-dice-test-merged.bin
+      - name: Publish installer firmware
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view test-latest >/dev/null 2>&1; then
+            gh release upload test-latest build/round-dice-test-merged.bin --clobber
+          else
+            gh release create test-latest build/round-dice-test-merged.bin --title "Round Dice Test – latest" --notes "Automatisch erzeugtes Test-Firmware-Image für den Web Installer."
+          fi
