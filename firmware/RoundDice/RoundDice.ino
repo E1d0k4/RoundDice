@@ -181,24 +181,61 @@ void processTouch(){
 } // namespace
 
 void setup(){
-  Serial.begin(115200); delay(1000);
-  frame=(uint16_t*)heap_caps_malloc(W*H*sizeof(uint16_t),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-  if(!frame){frame=(uint16_t*)heap_caps_malloc(W*H*sizeof(uint16_t),MALLOC_CAP_8BIT);}
-  if(!frame){while(true)delay(1000);}
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println();
+  Serial.println("Round Dice boot");
+
+  // Initialize the display BEFORE allocating the large framebuffer.
+  // Allocation failures are therefore visible instead of looking like a dead device.
   Wire.begin(IIC_SDA,IIC_SCL);
-  if(!gfx->begin())while(true)delay(1000);
-  gfx->fillScreen(BG);gfx->setBrightness(180);
+  if(!gfx->begin()){
+    Serial.println("DISPLAY ERROR");
+    while(true) delay(1000);
+  }
+  gfx->fillScreen(BG);
+  gfx->setBrightness(180);
+  drawTextAt("ROUND DICE",145,25,3,WHITE);
+  drawTextAt("DISPLAY OK",175,205,2,EDGE);
+  drawTextAt("STARTING 3D...",150,240,2,WHITE);
+
+  Serial.printf("PSRAM found: %s, size: %u bytes\n",
+                psramFound() ? "YES" : "NO",
+                (unsigned)ESP.getPsramSize());
+
+  const size_t frameBytes=(size_t)W*(size_t)H*sizeof(uint16_t);
+  frame=(uint16_t*)heap_caps_malloc(frameBytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+  if(!frame){
+    Serial.println("PSRAM FRAMEBUFFER ALLOCATION FAILED");
+    gfx->fillScreen(BG);
+    drawTextAt("PSRAM ERROR",145,190,3,RGB565_RED);
+    drawTextAt("NO FRAMEBUFFER",125,235,2,WHITE);
+    while(true) delay(1000);
+  }
+  Serial.printf("Framebuffer allocated: %u bytes\n",(unsigned)frameBytes);
 
   touch.setPins(TP_RESET,TP_INT);
-  if(!touch.begin(Wire,kTouchAddress,IIC_SDA,IIC_SCL)){drawTextAt("TOUCH ERROR",150,220,3,RGB565_RED);while(true)delay(1000);}
-  touch.setMaxCoordinates(LCD_WIDTH,LCD_HEIGHT);touch.setMirrorXY(true,true);
+  if(!touch.begin(Wire,kTouchAddress,IIC_SDA,IIC_SCL)){
+    Serial.println("TOUCH ERROR");
+    gfx->fillScreen(BG);
+    drawTextAt("TOUCH ERROR",150,220,3,RGB565_RED);
+    while(true) delay(1000);
+  }
+  touch.setMaxCoordinates(LCD_WIDTH,LCD_HEIGHT);
+  touch.setMirrorXY(true,true);
 
-  if(!qmi.begin(Wire,QMI8658_L_SLAVE_ADDRESS,IIC_SDA,IIC_SCL)){drawTextAt("IMU ERROR",155,220,3,RGB565_RED);while(true)delay(1000);}
+  if(!qmi.begin(Wire,QMI8658_L_SLAVE_ADDRESS,IIC_SDA,IIC_SCL)){
+    Serial.println("IMU ERROR");
+    gfx->fillScreen(BG);
+    drawTextAt("IMU ERROR",155,220,3,RGB565_RED);
+    while(true) delay(1000);
+  }
   qmi.configAccelerometer(SensorQMI8658::ACC_RANGE_4G,SensorQMI8658::ACC_ODR_1000Hz,SensorQMI8658::LPF_MODE_0);
   qmi.enableAccelerometer();
 
   randomSeed((unsigned long)micros());
-  drawStaticScreen(); draw3DTestCube();
+  drawStaticScreen();
+  draw3DTestCube();
   Serial.println("Round Dice true 3D renderer ready.");
 }
 
