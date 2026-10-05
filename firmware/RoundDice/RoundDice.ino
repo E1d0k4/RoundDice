@@ -213,6 +213,8 @@ void startDiceRoll(uint8_t result){
   lastPhysicsMs=millis();
 }
 
+void drawResult();
+
 void updateDicePhysics(){
   if(!diceRolling)return;
   uint32_t now=millis();
