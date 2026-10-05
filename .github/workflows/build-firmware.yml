@@ -45,8 +45,10 @@ jobs:
           test -n "$BOOTLOADER"
           test -n "$PARTITIONS"
           test -n "$FIRMWARE"
-          python3 -m esptool --version
-          python3 -m esptool --chip esp32s3 merge-bin -o build/round-dice-test-merged.bin 0x0 "$BOOTLOADER" 0x8000 "$PARTITIONS" 0x10000 "$FIRMWARE"
+          ESPTOOL="$HOME/.arduino15/packages/esp32/tools/esptool_py/5.3.0/esptool.py"
+          test -f "$ESPTOOL"
+          python3 "$ESPTOOL" version
+          python3 "$ESPTOOL" --chip esp32s3 merge-bin -o build/round-dice-test-merged.bin 0x0 "$BOOTLOADER" 0x8000 "$PARTITIONS" 0x10000 "$FIRMWARE"
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
