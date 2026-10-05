@@ -89,6 +89,8 @@ void rollDice() {
   Serial.printf("D6 roll: %u\n", static_cast<unsigned>(lastDice));
 }
 
+}  // namespace
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -160,6 +162,4 @@ void loop() {
     delay(500);
     drawDieFace(lastDice);
   }
-}
-
 }
